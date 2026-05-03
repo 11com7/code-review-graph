@@ -114,6 +114,7 @@ class TestLongRunningToolsAreAsync:
         "embed_graph_tool",
         "detect_changes_tool",
         "generate_wiki_tool",
+        "get_minimal_context_tool",
     }
 
     def test_heavy_tools_are_coroutines(self):
