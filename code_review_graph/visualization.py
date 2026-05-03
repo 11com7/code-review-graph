@@ -1468,6 +1468,8 @@ _AGGREGATED_HTML_TEMPLATE = r"""<!DOCTYPE html>
   .l-imports { border-top: 2px dashed #f0883e; }
   .l-inherits { border-top: 2.5px dotted #d2a8ff; }
   .l-contains { border-top: 1.5px solid rgba(139,148,158,0.3); }
+  .l-overrides { border-top: 2px dotted #f778ba; }
+
   #stats-bar {
     position: absolute; bottom: 0; left: 0; right: 0;
     background: rgba(13,17,23,0.95); border-top: 1px solid #21262d;
@@ -1589,11 +1591,15 @@ _AGGREGATED_HTML_TEMPLATE = r"""<!DOCTYPE html>
   <h3>Nodes</h3>
   <div class="legend-section" id="legend-nodes"></div>
   <h3>Edges</h3>
-  <div class="legend-section" id="legend-edges"></div>
-</div>
-<div id="filter-panel">
-  <h3>View Mode</h3>
-  <div id="filter-info" style="color:#8b949e;font-size:11px;"></div>
+  <div class="legend-section" id="legend-edges">
+    <div class="legend-item" data-edge-kind="CALLS"><span class="legend-line l-calls"></span> Calls</div>
+    <div class="legend-item" data-edge-kind="IMPORTS_FROM"><span class="legend-line l-imports"></span> Imports</div>
+    <div class="legend-item" data-edge-kind="INHERITS"><span class="legend-line l-inherits"></span> Inherits</div>
+    <div class="legend-item" data-edge-kind="CONTAINS"><span class="legend-line l-contains"></span> Contains</div>
+    <div class="legend-item" data-edge-kind="OVERRIDES"><span class="legend-line l-overrides"></span> Overrides</div>
+    <div class="legend-item" data-edge-kind="STYLES"><span class="legend-line l-styles"></span> Styles</div>
+    <div class="legend-item" data-edge-kind="POTENTIAL_CONFLICT"><span class="legend-line l-conflict"></span> Conflict</div>
+  </div>
 </div>
 <div id="controls">
   <input id="search" type="text" placeholder="Search nodes&#8230;" autocomplete="off" spellcheck="false" aria-label="Search graph nodes by name">
@@ -1613,6 +1619,68 @@ var dataMode = graphData.mode || "full";
 var communityDetails = graphData.community_details || {};
 
 var communityColorScale = d3.scaleOrdinal(d3.schemeTableau10);
+
+// -- Config --
+const KIND_COLOR  = { File:"#58a6ff", Class:"#f0883e", Function:"#3fb950", Test:"#d2a8ff", Type:"#8b949e" };
+const KIND_RADIUS = { File:18, Class:12, Function:6, Test:6, Type:5 };
+const EDGE_COLOR  = { CALLS:"#3fb950", IMPORTS_FROM:"#f0883e", INHERITS:"#d2a8ff", CONTAINS:"rgba(139,148,158,0.15)", OVERRIDES:"#f778ba", STYLES:"#79c0ff", POTENTIAL_CONFLICT:"#f85149" };
+
+// -- Display name: short, clean labels --
+function displayName(d) {
+  if (d.kind === "File") {
+    const fp = d.file_path || d.qualified_name || d.name;
+    const parts = fp.replace(/\\/g, "/").split("/");
+    const fname = parts.pop();
+    const parent = parts.pop() || "";
+    return parent ? parent + "/" + fname : fname;
+  }
+  return d.name;
+}
+
+// -- Prepare data --
+const nodes = graphData.nodes.map(d => ({...d, _id: d.qualified_name, label: displayName(d)}));
+const edges = graphData.edges.map(d => ({...d, _source: d.source, _target: d.target}));
+const stats = graphData.stats;
+const nodeById = new Map(nodes.map(n => [n.qualified_name, n]));
+
+// Edge kind toggle
+const hiddenEdgeKinds = new Set();
+
+// Containment hierarchy
+const collapsedFiles = new Set();
+const containsChildren = new Map();
+const childToParent = new Map();
+edges.forEach(e => {
+  if (e.kind === "CONTAINS") {
+    if (!containsChildren.has(e._source)) containsChildren.set(e._source, new Set());
+    containsChildren.get(e._source).add(e._target);
+    childToParent.set(e._target, e._source);
+  }
+});
+
+function allDescendants(qn) {
+  const result = new Set();
+  const stack = [qn];
+  while (stack.length) {
+    const cur = stack.pop();
+    const children = containsChildren.get(cur);
+    if (!children) continue;
+    for (const c of children) {
+      if (!result.has(c)) { result.add(c); stack.push(c); }
+    }
+  }
+  return result;
+}
+
+// -- Stats bar --
+const statsBar = document.getElementById("stats-bar");
+const langList = (stats.languages || []).join(", ") || "n/a";
+const si = (l,v) => `<div class="stat-item"><span class="tt-label">${l}</span> <span class="stat-value">${v}</span></div>`;
+statsBar.innerHTML = si("Nodes", stats.total_nodes) + si("Edges", stats.total_edges)
+  + si("Files", stats.files_count) + si("Languages", langList);
+
+// -- Tooltip --
+const tooltip = document.getElementById("tooltip");
 function escH(s) { return !s ? "" : s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;").replace(/`/g,"&#96;"); }
 
 var KIND_COLOR = {
@@ -1702,45 +1770,23 @@ if (dataMode === "community") {
 /* --- Tooltip --- */
 var tooltip = document.getElementById("tooltip");
 function showTooltip(ev, d) {
-  var bg = KIND_COLOR[d.kind] || "#555";
-  tooltip.textContent = "";
-  var nameSpan = document.createElement("span");
-  nameSpan.className = "tt-name";
-  nameSpan.textContent = d.name || d.label;
-  tooltip.appendChild(nameSpan);
-  var kindSpan = document.createElement("span");
-  kindSpan.className = "tt-kind";
-  kindSpan.style.background = bg;
-  kindSpan.style.color = "#0d1117";
-  kindSpan.textContent = d.kind;
-  tooltip.appendChild(kindSpan);
-  function addRow(label, value) {
-    var row = document.createElement("div");
-    row.className = "tt-row";
-    var lbl = document.createElement("span");
-    lbl.className = "tt-label";
-    lbl.textContent = label + ": ";
-    row.appendChild(lbl);
-    row.appendChild(document.createTextNode(String(value)));
-    tooltip.appendChild(row);
-  }
-  if (d.member_count != null) addRow("Members", d.member_count);
-  if (d.symbol_count != null) addRow("Symbols", d.symbol_count);
-  if (d.description) addRow("Description", d.description);
-  if (d.language) addRow("Language", d.language);
-  if (d.file_path) {
-    var relFile = d.file_path.split("/").slice(-3).join("/");
-    if (relFile) {
-      var fileRow = document.createElement("div");
-      fileRow.className = "tt-row tt-file";
-      fileRow.textContent = relFile;
-      tooltip.appendChild(fileRow);
-    }
-  }
-  if (d.line_start != null) addRow("Lines", d.line_start + " \u2013 " + (d.line_end || d.line_start));
-  if (d.params) addRow("Params", d.params);
-  if (d.return_type) addRow("Returns", d.return_type);
-  if (d.weight != null) addRow("Weight", d.weight);
+  const bg = KIND_COLOR[d.kind] || "#555";
+  const relFile = d.file_path ? d.file_path.split("/").slice(-3).join("/") : "";
+  let h = `<span class="tt-name">${escH(d.label || d.name)}</span>`;
+  const ex = d.extra || {};
+  const kindLabel = ex.css_kind ? ("CSS " + escH(ex.css_kind)) : (ex.solidity_kind ? ("Solidity " + escH(ex.solidity_kind)) : escH(d.kind));
+  h += `<span class="tt-kind" style="background:${bg};color:#0d1117">${kindLabel}</span>`;
+  if (d.member_count != null) h += `<div class="tt-row"><span class="tt-label">Members: </span>${d.member_count}</div>`;
+  if (d.symbol_count != null) h += `<div class="tt-row"><span class="tt-label">Symbols: </span>${d.symbol_count}</div>`;
+  if (d.description) h += `<div class="tt-row"><span class="tt-label">Desc: </span>${escH(d.description)}</div>`;
+  if (d.language) h += `<div class="tt-row"><span class="tt-label">Lang: </span>${escH(d.language)}</div>`;
+  if (relFile) h += `<div class="tt-row tt-file">${escH(relFile)}</div>`;
+  if (d.line_start != null) h += `<div class="tt-row"><span class="tt-label">Lines: </span>${d.line_start} \u2013 ${d.line_end || d.line_start}</div>`;
+  if (d.params) h += `<div class="tt-row"><span class="tt-label">Params: </span>${escH(d.params)}</div>`;
+  if (d.return_type) h += `<div class="tt-row"><span class="tt-label">Returns: </span>${escH(d.return_type)}</div>`;
+  if (d.weight != null) h += `<div class="tt-row"><span class="tt-label">Weight: </span>${d.weight}</div>`;
+  if (ex.specificity) { const sp = ex.specificity; h += `<div class="tt-row"><span class="tt-label">Specificity: </span>(${Array.isArray(sp)?sp.join(","):sp})</div>`; }
+  tooltip.innerHTML = h;
   tooltip.classList.add("visible");
   moveTooltip(ev);
 }
@@ -1767,7 +1813,8 @@ var defs = svg.append("defs");
 var glow = defs.append("filter").attr("id","glow").attr("x","-50%").attr("y","-50%").attr("width","200%").attr("height","200%");
 glow.append("feGaussianBlur").attr("stdDeviation","3").attr("result","blur");
 glow.append("feComposite").attr("in","SourceGraphic").attr("in2","blur").attr("operator","over");
-[{id:"arrow-calls",color:"#3fb950"},{id:"arrow-imports",color:"#f0883e"},{id:"arrow-inherits",color:"#d2a8ff"}].forEach(function(mk) {
+
+[{id:"arrow-calls",color:"#3fb950"},{id:"arrow-imports",color:"#f0883e"},{id:"arrow-inherits",color:"#d2a8ff"},{id:"arrow-overrides",color:"#f778ba"},{id:"arrow-styles",color:"#79c0ff"},{id:"arrow-conflict",color:"#f85149"}].forEach(mk => {
   defs.append("marker").attr("id", mk.id)
     .attr("viewBox","0 -5 10 10").attr("refX",28).attr("refY",0)
     .attr("markerWidth",8).attr("markerHeight",8).attr("orient","auto")
