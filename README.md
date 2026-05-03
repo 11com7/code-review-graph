@@ -35,18 +35,12 @@ AI coding tools re-read your entire codebase on every task. `code-review-graph` 
 ## Quick Start
 
 ```bash
-# Install from this fork (recommended — includes Windows fixes and backports)
-pip install git+https://github.com/11com7/code-review-graph.git
-# or with pipx:
-pipx install git+https://github.com/11com7/code-review-graph.git
-# or with uv (recommended):
 uv tool install git+https://github.com/11com7/code-review-graph.git
-
 code-review-graph install          # auto-detects and configures all supported platforms
 code-review-graph build            # parse your codebase
 ```
 
-One command sets up everything. `install` detects which AI coding tools you have, writes the correct MCP configuration for each one, and injects graph-aware instructions into your platform rules. It auto-detects whether you installed via `uvx` or `pip`/`pipx` and generates the right config. Restart your editor/tool after installing.
+One command sets up everything. `install` detects which AI coding tools you have, writes the correct MCP configuration for each one, and injects graph-aware instructions into your platform rules. Restart your editor/tool after installing.
 
 <p align="center">
   <img src="diagrams/diagram8_supported_platforms.png" alt="One Install, Every Platform: auto-detects Codex, Claude Code, Cursor, Windsurf, Zed, Continue, OpenCode, Antigravity, Qwen, Qoder, and Kiro" width="85%" />
@@ -61,7 +55,7 @@ code-review-graph install --platform claude-code  # configure only Claude Code
 code-review-graph install --platform kiro         # configure only Kiro
 ```
 
-Requires Python 3.10+. For the best experience, install [uv](https://docs.astral.sh/uv/) (the MCP config will use `uvx` if available, otherwise falls back to the `code-review-graph` command directly).
+Requires Python 3.10+ and [uv](https://docs.astral.sh/uv/). The MCP config is generated to use `uvx` automatically.
 
 Then open your project and ask your AI assistant:
 
@@ -384,12 +378,12 @@ Note: in git repos, only tracked files are indexed (`git ls-files`), so gitignor
 Optional dependency groups:
 
 ```bash
-pip install "git+https://github.com/11com7/code-review-graph.git#egg=code-review-graph[embeddings]"
-pip install "git+https://github.com/11com7/code-review-graph.git#egg=code-review-graph[google-embeddings]"
-pip install "git+https://github.com/11com7/code-review-graph.git#egg=code-review-graph[communities]"
-pip install "git+https://github.com/11com7/code-review-graph.git#egg=code-review-graph[eval]"
-pip install "git+https://github.com/11com7/code-review-graph.git#egg=code-review-graph[wiki]"
-pip install "git+https://github.com/11com7/code-review-graph.git#egg=code-review-graph[all]"
+uv tool install "git+https://github.com/11com7/code-review-graph.git[embeddings]"
+uv tool install "git+https://github.com/11com7/code-review-graph.git[google-embeddings]"
+uv tool install "git+https://github.com/11com7/code-review-graph.git[communities]"
+uv tool install "git+https://github.com/11com7/code-review-graph.git[eval]"
+uv tool install "git+https://github.com/11com7/code-review-graph.git[wiki]"
+uv tool install "git+https://github.com/11com7/code-review-graph.git[all]"
 ```
 
 ### Environment Variables
