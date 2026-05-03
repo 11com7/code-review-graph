@@ -1343,6 +1343,9 @@ class TestCppScopedFunctionName:
     See: https://github.com/tirth8205/code-review-graph/issues/395
     """
 
+    def setup_method(self):
+        self.parser = CodeParser()
+
     def test_scoped_function_with_type_identifier_return(self, tmp_path):
         """bufferlist OSDService::get_inc_map(...) should extract 'get_inc_map'."""
         src = tmp_path / "osd_service.cpp"
