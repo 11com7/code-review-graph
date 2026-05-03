@@ -68,45 +68,60 @@ def _run_rescript_resolver(store: GraphStore) -> Optional[dict]:
         logger.warning("ReScript cross-module resolver failed: %s", exc)
         return None
 
-# Default ignore patterns (in addition to .gitignore).
+# Default ignore patterns (in addition to .gitignore)
 #
-# `<dir>/**` patterns are matched at any depth by _should_ignore, so
-# `node_modules/**` also excludes `packages/app/node_modules/react/index.js`
-# inside monorepos. See: #91
+# Two pattern styles:
+# 1. `**/name/**` — matches `name` as any path segment (safe-anywhere).
+#    Use only for directories that are NEVER legitimate source code names
+#    (node_modules, __pycache__, .venv, vendor, .gradle, .dart_tool, etc.).
+# 2. `name/**` — matches only at repo root.
+#    Use for directories that MAY be valid source names in some projects
+#    (packages/, bin/, build/, dist/, storage/, obj/).
 DEFAULT_IGNORE_PATTERNS = [
+    # Tool-owned (always safe anywhere)
     ".code-review-graph/**",
-    "node_modules/**",
     ".git/**",
     ".svn/**",
-    "__pycache__/**",
-    "*.pyc",
-    ".venv/**",
-    "venv/**",
+    # Dependency directories — never source code, safe to match anywhere
+    "**/node_modules/**",
+    "**/__pycache__/**",
+    "**/.venv/**",
+    "**/venv/**",
+    "**/vendor/**",          # Composer (PHP), Go modules, Ruby/Rails
+    "**/.bundle/**",         # Ruby Bundler
+    "**/.gradle/**",         # Gradle cache
+    "**/.dart_tool/**",      # Dart/Flutter
+    "**/.pub-cache/**",      # Dart/Flutter
+    "**/.cache/**",
+    # Framework build/output dirs — at repo root only to avoid matching
+    # legit source dirs (e.g. src/build/, packages/, etc.)
+    ".next/**",
+    ".nuxt/**",
     "dist/**",
     "build/**",
-    ".next/**",
-    "target/**",
-    # PHP / Laravel / Composer
-    "vendor/**",
-    "bootstrap/cache/**",
-    "public/build/**",
-    # Ruby / Bundler
-    ".bundle/**",
-    # Java / Kotlin / Gradle
-    ".gradle/**",
-    "*.jar",
-    # Dart / Flutter
-    ".dart_tool/**",
-    ".pub-cache/**",
-    # General
+    "target/**",             # Rust (also used by Maven/SBT)
+    "bin/**",                # .NET (root only; src/bin/ not ignored)
+    "obj/**",                # .NET
+    # NOTE: `packages/**` (.NET NuGet) is NOT included because it conflicts
+    # with npm/Lerna/Turborepo monorepos where packages/ holds source code.
+    # .NET users should add it via .code-review-graphignore.
+    "storage/**",            # Laravel
+    "bootstrap/cache/**",    # Laravel
+    "public/build/**",       # Laravel Mix/Vite output
     "coverage/**",
-    ".cache/**",
+    ".tmp/**",
+    "tmp/**",
+    # Python cache file
+    "*.pyc",
+    # Minified / generated single files
     "*.min.js",
     "*.min.css",
     "*.map",
     "*.lock",
     "package-lock.json",
     "yarn.lock",
+    "*.jar",                 # Java compiled
+    # Database files
     "*.db",
     "*.sqlite",
     "*.db-journal",
@@ -315,27 +330,33 @@ def _load_ignore_patterns(repo_root: Path) -> list[str]:
 def _should_ignore(path: str, patterns: list[str]) -> bool:
     """Check if a path matches any ignore pattern.
 
-    Handles nested occurrences of ``<dir>/**`` patterns: for example,
-    ``node_modules/**`` also matches ``packages/app/node_modules/foo.js``
-    inside monorepos. ``fnmatch`` alone treats ``*`` as not crossing ``/``
-    and only matches the prefix, so we additionally test each path segment
-    against the bare prefix of ``<dir>/**`` patterns. See: #91
+    Pattern semantics:
+    - ``**/name/**`` — matches ``name`` as any path segment (safe-anywhere).
+      Use for dirs that are never valid source code (node_modules, vendor).
+    - ``name/**``   — matches only at the repo root (first segment is ``name``).
+      Use for dirs that may be valid source names in some projects (packages,
+      bin, build).
+    - ``*.ext`` and other non-``**`` patterns fall back to ``fnmatch``.
     """
-    # Direct fnmatch first (cheap)
-    if any(fnmatch.fnmatch(path, p) for p in patterns):
-        return True
-    # Then: treat simple single-segment "dir/**" patterns as
-    # "this directory at any depth".
     parts = PurePosixPath(path).parts
     for p in patterns:
-        if not p.endswith("/**"):
-            continue
-        prefix = p[:-3]
-        # Only single-segment dir patterns (no "/" inside the prefix)
-        # qualify for nested matching.
-        if "/" in prefix or not prefix:
-            continue
-        if prefix in parts:
+        # Safe-anywhere: **/name/**
+        if p.startswith("**/") and p.endswith("/**"):
+            segment = p[3:-3]
+            if segment in parts:
+                return True
+        # Root-relative: name/** — matches only if first segment is `name`
+        elif p.endswith("/**"):
+            prefix = p[:-3]
+            # Support multi-segment prefixes like "bootstrap/cache"
+            prefix_parts = prefix.split("/")
+            if (
+                len(parts) >= len(prefix_parts)
+                and parts[: len(prefix_parts)] == tuple(prefix_parts)
+            ):
+                return True
+        # Plain glob (e.g. *.pyc, *.min.js)
+        elif fnmatch.fnmatch(path, p):
             return True
     return False
 

@@ -187,9 +187,9 @@ class TestEnsureRepoGitignoreExcludesCrg:
 class TestIgnorePatterns:
     def test_default_patterns_loaded(self, tmp_path):
         patterns = _load_ignore_patterns(tmp_path)
-        assert "node_modules/**" in patterns
+        assert "**/node_modules/**" in patterns
         assert ".git/**" in patterns
-        assert "__pycache__/**" in patterns
+        assert "**/__pycache__/**" in patterns
 
     def test_custom_ignore_file(self, tmp_path):
         ignore = tmp_path / ".code-review-graphignore"
@@ -202,44 +202,57 @@ class TestIgnorePatterns:
         assert "" not in patterns
 
     def test_should_ignore_matches(self):
-        patterns = ["node_modules/**", "*.pyc", ".git/**"]
+        patterns = ["**/node_modules/**", "*.pyc", ".git/**"]
         assert _should_ignore("node_modules/foo/bar.js", patterns)
         assert _should_ignore("test.pyc", patterns)
         assert _should_ignore(".git/HEAD", patterns)
         assert not _should_ignore("src/main.py", patterns)
 
-    def test_should_ignore_nested_dependency_dirs(self):
-        """Nested node_modules / vendor / .gradle should be ignored (#91)."""
-        patterns = [
-            "node_modules/**", "vendor/**", ".gradle/**", ".venv/**",
-        ]
-        # Monorepo: nested node_modules
+    def test_safe_anywhere_matches_nested_paths(self):
+        """**/name/** patterns match nested dependency dirs (monorepos)."""
+        patterns = ["**/node_modules/**", "**/vendor/**", "**/__pycache__/**"]
         assert _should_ignore("packages/app/node_modules/react/index.js", patterns)
-        assert _should_ignore("apps/web/node_modules/lodash/index.js", patterns)
-        # PHP/Laravel: vendor at any depth
-        assert _should_ignore("backend/vendor/autoload.php", patterns)
-        # Gradle at any depth
-        assert _should_ignore("android/app/.gradle/cache/metadata.bin", patterns)
-        # Negative: similarly-named dirs that aren't a match
-        assert not _should_ignore("src/node_modules_helper/foo.py", patterns)
-        assert not _should_ignore("src/venv_tools/bar.py", patterns)
+        assert _should_ignore("services/api/vendor/guzzlehttp/Client.php", patterns)
+        assert _should_ignore("src/utils/__pycache__/helpers.cpython-311.pyc", patterns)
+        assert not _should_ignore("packages/app/src/main.ts", patterns)
+        assert not _should_ignore("src/vendors/custom.php", patterns)
 
-    def test_should_ignore_framework_defaults(self):
-        """Default patterns should cover Laravel, Gradle, Flutter, and caches."""
+    def test_root_relative_patterns_dont_match_nested(self):
+        """name/** patterns should only match at root, not nested `name/` dirs."""
+        patterns = ["packages/**", "bin/**", "build/**"]
+        assert _should_ignore("packages/nuget-cache/lib.dll", patterns)
+        assert _should_ignore("bin/Debug/net8.0/app.dll", patterns)
+        assert _should_ignore("build/output.txt", patterns)
+        assert not _should_ignore("apps/web/packages/src/main.ts", patterns)
+        assert not _should_ignore("services/api/bin/helper.sh", patterns)
+        assert not _should_ignore("docs/build/page.md", patterns)
+
+    def test_multi_segment_root_prefix(self):
+        """Multi-segment patterns like `bootstrap/cache/**` match only at root."""
+        patterns = ["bootstrap/cache/**"]
+        assert _should_ignore("bootstrap/cache/packages.php", patterns)
+        assert not _should_ignore("src/bootstrap/cache/file.php", patterns)
+
+    def test_should_ignore_framework_patterns(self):
+        """Framework-specific dirs from DEFAULT_IGNORE_PATTERNS."""
         from code_review_graph.incremental import DEFAULT_IGNORE_PATTERNS
 
         patterns = DEFAULT_IGNORE_PATTERNS
-        # Laravel/PHP
-        assert _should_ignore("vendor/autoload.php", patterns)
-        assert _should_ignore("bootstrap/cache/packages.php", patterns)
-        # Gradle/Java
-        assert _should_ignore(".gradle/caches/jars.bin", patterns)
-        assert _should_ignore("build/libs/app.jar", patterns)
-        # Flutter/Dart
+        assert _should_ignore("vendor/laravel/framework/src/Collection.php", patterns)
+        assert _should_ignore("services/api/vendor/pkg/file.go", patterns)
         assert _should_ignore(".dart_tool/package_config.json", patterns)
-        # Coverage/cache
-        assert _should_ignore("coverage/lcov.info", patterns)
-        assert _should_ignore(".cache/webpack/index.pack", patterns)
+        assert _should_ignore(".gradle/caches/transforms-3/file.jar", patterns)
+        assert _should_ignore("node_modules/react/index.js", patterns)
+        assert _should_ignore("apps/api/node_modules/foo.js", patterns)
+        assert _should_ignore("storage/logs/laravel.log", patterns)
+        assert _should_ignore("bootstrap/cache/packages.php", patterns)
+        assert _should_ignore("public/build/assets/app.js", patterns)
+        assert _should_ignore("bin/Debug/net8.0/app.dll", patterns)
+        assert _should_ignore("obj/Release/app.assets.cache", patterns)
+        assert not _should_ignore("packages/app/src/main.ts", patterns)
+        assert not _should_ignore("packages/Newtonsoft.Json.13.0.1/lib.dll", patterns)
+        assert not _should_ignore("apps/web/src/main.tsx", patterns)
+        assert not _should_ignore("app/Http/Controllers/UserController.php", patterns)
 
 
 class TestDataDir:
@@ -252,42 +265,22 @@ class TestDataDir:
         result = get_data_dir(tmp_path)
         assert result == tmp_path / ".code-review-graph"
         assert result.is_dir()
-        # Auto-generated gitignore must exist
         assert (result / ".gitignore").is_file()
         content = (result / ".gitignore").read_text(encoding="utf-8")
         assert content.strip().endswith("*")
 
     def test_auto_gitignore_is_valid_utf8(self, tmp_path, monkeypatch):
-        """Regression guard for #239 bug 1: the auto-generated .gitignore
-        must be written as UTF-8 on every platform.
-
-        Before the fix, ``write_text()`` was called without an encoding
-        argument.  The header contains an em-dash (U+2014) which Python
-        writes using the system default codepage on Windows (cp1252 →
-        byte 0x97), producing a file that cannot be decoded as UTF-8.
-        """
+        """Regression: auto-generated .gitignore must be UTF-8 on all platforms (#239)."""
         monkeypatch.delenv("CRG_DATA_DIR", raising=False)
         from code_review_graph.incremental import get_data_dir
         data_dir = get_data_dir(tmp_path)
         gi = data_dir / ".gitignore"
         assert gi.is_file()
-
-        # The file must be valid UTF-8 — this is what actually broke.
         raw = gi.read_bytes()
-        # The em-dash must be stored as the proper UTF-8 sequence (0xE2 0x80 0x94),
-        # not as the cp1252 single byte 0x97.
-        assert b"\xe2\x80\x94" in raw, (
-            "auto-generated .gitignore is missing the UTF-8 em-dash; it was "
-            "probably written using the platform default codepage"
-        )
-        assert b"\x97" not in raw, (
-            "auto-generated .gitignore contains cp1252 byte 0x97 — indicates "
-            "write_text was called without encoding='utf-8'"
-        )
-
-        # And it must round-trip cleanly under strict UTF-8 decoding.
+        assert b"\xe2\x80\x94" in raw
+        assert b"\x97" not in raw
         decoded = raw.decode("utf-8", errors="strict")
-        assert "—" in decoded, "em-dash missing from decoded gitignore"
+        assert "—" in decoded
 
     def test_env_override_replaces_repo_subdir(self, tmp_path, monkeypatch):
         """CRG_DATA_DIR replaces the default <repo>/.code-review-graph."""
@@ -299,7 +292,6 @@ class TestDataDir:
         result = get_data_dir(repo)
         assert result == external.resolve()
         assert result.is_dir()
-        # The repo itself should NOT have a .code-review-graph dir now
         assert not (repo / ".code-review-graph").exists()
 
     def test_get_db_path_uses_data_dir(self, tmp_path, monkeypatch):
@@ -326,14 +318,12 @@ class TestDataDir:
     def test_find_project_root_env_override_missing_dir_falls_through(
         self, tmp_path, monkeypatch,
     ):
-        """CRG_REPO_ROOT pointing at a non-existent path falls back to
-        the usual resolution rather than crashing."""
+        """CRG_REPO_ROOT pointing at a non-existent path falls through to normal resolution."""
         monkeypatch.setenv(
             "CRG_REPO_ROOT", str(tmp_path / "does-not-exist-123"),
         )
         from code_review_graph.incremental import find_project_root
         result = find_project_root(tmp_path)
-        # Should NOT equal the bogus env value
         assert result != tmp_path / "does-not-exist-123"
 
 
