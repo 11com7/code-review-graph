@@ -747,6 +747,22 @@ class CodeParser:
                 return None
         return self._parsers[language]
 
+    # Map shebang interpreter name → language label.
+    _SHEBANG_LANGUAGE: dict[str, str] = {
+        "bash": "bash",
+        "sh": "bash",
+        "python": "python",
+        "python2": "python",
+        "python3": "python",
+        "node": "javascript",
+        "nodejs": "javascript",
+        "ruby": "ruby",
+        "perl": "perl",
+        "php": "php",
+        "lua": "lua",
+        "Rscript": "r",
+    }
+
     def detect_language(self, path: Path) -> Optional[str]:
         """Map a file path to its language name.
 
@@ -6774,6 +6790,17 @@ class CodeParser:
             for child in node.children:
                 if child.type == "word":
                     return child.text.decode("utf-8", errors="replace")
+        # Julia: function Base.show(io, d) — qualified name via field_expression.
+        # Extract only the final identifier ("show") as the function name; the
+        # module qualifier ("Base") is emitted as a REFERENCES edge separately.
+        if language == "julia" and node.type in (
+            "function_definition", "short_function_definition",
+        ):
+            for child in node.children:
+                if child.type == "field_expression":
+                    for sub in reversed(list(child.children)):
+                        if sub.type == "identifier":
+                            return sub.text.decode("utf-8", errors="replace")
         # Go methods: tree-sitter-go uses field_identifier for the name
         # (e.g. func (s *T) MethodName(...) { }). Must run before the generic
         # loop, which would match the result type's type_identifier (e.g. int64).
@@ -6896,6 +6923,20 @@ class CodeParser:
             for child in node.children:
                 if child.type == "type_spec":
                     return self._get_name(child, language, kind)
+        return None
+
+    def _get_julia_module_qualifier(self, node) -> Optional[str]:
+        """Return the module name for a Julia qualified function definition.
+
+        For ``function Base.show(io::IO, d::Dog)`` the ``function_definition``
+        node contains a ``field_expression`` whose first ``identifier`` child
+        is the module name (``"Base"``).  Returns ``None`` for plain functions.
+        """
+        for child in node.children:
+            if child.type == "field_expression":
+                for sub in child.children:
+                    if sub.type == "identifier":
+                        return sub.text.decode("utf-8", errors="replace")
         return None
 
     def _get_go_receiver_type(self, node) -> Optional[str]:

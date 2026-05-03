@@ -234,7 +234,7 @@ class TestApplyToolFilter:
     """
 
     @pytest.fixture(autouse=True)
-    def _restore_tools(self):
+    async def _restore_tools(self):
         """Snapshot registered tools before test, restore after.
 
         ``_apply_tool_filter`` calls ``mcp.remove_tool()`` which is
