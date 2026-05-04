@@ -20,6 +20,7 @@ from code_review_graph.skills import (
     _build_server_entry,
     _cursor_hook_scripts,
     _detect_serve_command,
+    _detect_windows_exe,
     _in_poetry_project,
     _in_uv_project,
     _opencode_plugin_content,
@@ -1237,6 +1238,120 @@ class TestDetectServeCommand:
         monkeypatch.setattr("code_review_graph.skills.sys.executable", str(fake_python))
         monkeypatch.setattr("code_review_graph.skills.Path.home", staticmethod(lambda: tmp_path))
         assert _in_uv_project() is False
+
+    # ------------------------------------------------------------------
+    # _detect_windows_exe() unit tests
+    # ------------------------------------------------------------------
+
+    def test_detect_windows_exe_found(self, monkeypatch):
+        """On Windows, returns the absolute exe path when found on PATH."""
+        monkeypatch.setattr("code_review_graph.skills.sys.platform", "win32")
+        monkeypatch.setattr(
+            "code_review_graph.skills.shutil.which",
+            lambda x: r"C:\Users\user\.local\bin\code-review-graph.exe" if x == "code-review-graph" else None,
+        )
+        result = _detect_windows_exe()
+        assert result is not None
+        cmd, args = result
+        assert cmd == r"C:\Users\user\.local\bin\code-review-graph.exe"
+        assert args == ["serve"]
+
+    def test_detect_windows_exe_not_found(self, monkeypatch):
+        """On Windows, returns None when the executable is not on PATH."""
+        monkeypatch.setattr("code_review_graph.skills.sys.platform", "win32")
+        monkeypatch.setattr("code_review_graph.skills.shutil.which", lambda _: None)
+        assert _detect_windows_exe() is None
+
+    def test_detect_windows_exe_skipped_on_linux(self, monkeypatch):
+        """On Linux/WSL, returns None without calling shutil.which."""
+        monkeypatch.setattr("code_review_graph.skills.sys.platform", "linux")
+        called = []
+        monkeypatch.setattr(
+            "code_review_graph.skills.shutil.which",
+            lambda x: called.append(x) or None,
+        )
+        assert _detect_windows_exe() is None
+        assert "code-review-graph" not in called
+
+    def test_detect_serve_command_uses_exe_on_windows(self, monkeypatch):
+        """On Windows with exe on PATH, _detect_serve_command returns the exe."""
+        monkeypatch.setattr("code_review_graph.skills.sys.platform", "win32")
+        monkeypatch.delenv("POETRY_ACTIVE", raising=False)
+        monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+        monkeypatch.delenv("UV_PROJECT_ENVIRONMENT", raising=False)
+        monkeypatch.setattr(
+            "code_review_graph.skills.shutil.which",
+            lambda x: r"C:\Users\user\.local\bin\code-review-graph.exe" if x == "code-review-graph" else None,
+        )
+        cmd, args = _detect_serve_command()
+        assert cmd == r"C:\Users\user\.local\bin\code-review-graph.exe"
+        assert args == ["serve"]
+
+    def test_detect_serve_command_falls_back_on_windows_without_exe(self, monkeypatch):
+        """On Windows, falls through to uvx when exe is not on PATH."""
+        monkeypatch.setattr("code_review_graph.skills.sys.platform", "win32")
+        monkeypatch.delenv("POETRY_ACTIVE", raising=False)
+        monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+        monkeypatch.delenv("UV_PROJECT_ENVIRONMENT", raising=False)
+        monkeypatch.setattr("code_review_graph.skills._in_uv_project", lambda: False)
+        monkeypatch.setattr(
+            "code_review_graph.skills.shutil.which",
+            lambda x: "/usr/bin/uvx" if x == "uvx" else None,
+        )
+        cmd, args = _detect_serve_command()
+        assert cmd == "uvx"
+        assert args == ["code-review-graph", "serve"]
+
+
+class TestBuildServerEntry:
+    """Tests for _build_server_entry() — env and platform-specific behaviour."""
+
+    def test_sets_pythonutf8_env_on_windows(self, monkeypatch, tmp_path):
+        """On Windows, env contains PYTHONUTF8=1 for non-opencode platforms."""
+        monkeypatch.setattr("code_review_graph.skills.sys.platform", "win32")
+        monkeypatch.setattr(
+            "code_review_graph.skills.shutil.which",
+            lambda x: r"C:\tools\code-review-graph.exe" if x == "code-review-graph" else None,
+        )
+        entry = _build_server_entry(PLATFORMS["claude"], tmp_path, key="claude")
+        assert entry.get("env") == {"PYTHONUTF8": "1"}
+
+    def test_no_env_on_linux(self, monkeypatch, tmp_path):
+        """On Linux/WSL, env is not added for non-opencode platforms."""
+        monkeypatch.setattr("code_review_graph.skills.sys.platform", "linux")
+        monkeypatch.setattr("code_review_graph.skills.shutil.which", lambda _: None)
+        monkeypatch.setattr("code_review_graph.skills._in_uv_project", lambda: False)
+        monkeypatch.delenv("POETRY_ACTIVE", raising=False)
+        monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+        monkeypatch.delenv("UV_PROJECT_ENVIRONMENT", raising=False)
+        entry = _build_server_entry(PLATFORMS["claude"], tmp_path, key="claude")
+        assert "env" not in entry
+
+    def test_opencode_keeps_empty_env_list_on_windows(self, monkeypatch, tmp_path):
+        """OpenCode retains its own env:[] schema even on Windows."""
+        monkeypatch.setattr("code_review_graph.skills.sys.platform", "win32")
+        monkeypatch.setattr(
+            "code_review_graph.skills.shutil.which",
+            lambda x: r"C:\tools\code-review-graph.exe" if x == "code-review-graph" else None,
+        )
+        entry = _build_server_entry(PLATFORMS["opencode"], tmp_path, key="opencode")
+        assert entry.get("env") == []
+
+    def test_install_writes_pythonutf8_env_in_mcp_json_on_windows(self, monkeypatch, tmp_path):
+        """End-to-end: install_platform_configs writes PYTHONUTF8=1 on Windows."""
+        monkeypatch.setattr("code_review_graph.skills.sys.platform", "win32")
+        monkeypatch.setattr(
+            "code_review_graph.skills.shutil.which",
+            lambda x: r"C:\tools\code-review-graph.exe" if x == "code-review-graph" else None,
+        )
+        install_platform_configs(tmp_path, target="claude")
+        mcp_json = tmp_path / ".mcp.json"
+        assert mcp_json.exists()
+        data = json.loads(mcp_json.read_text(encoding="utf-8"))
+        entry = data["mcpServers"]["code-review-graph"]
+        assert entry["env"] == {"PYTHONUTF8": "1"}
+        assert entry["command"] == r"C:\tools\code-review-graph.exe"
+        assert entry["args"] == ["serve"]
 
 
 class TestOpenCodePluginContent:
