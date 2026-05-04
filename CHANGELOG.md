@@ -2,14 +2,63 @@
 
 ## [Unreleased]
 
+## [2.3.2+11com7.1] - 2026-05-04
+
+Curated 11com7 fork release — upstream 2.3.2 plus community PRs from the upstream review queue and Windows-specific fixes.
+
 ### Fixed
 
-- **Windows: `install` now auto-configures MCP entries for Claude Code correctly.** On Windows, `code-review-graph install` resolves the absolute path to `code-review-graph.exe` via `shutil.which` and adds `PYTHONUTF8=1` to the server entry, fixing `Invalid JSON: EOF while parsing` / `MCP error -32000: Connection closed` errors on first connect. WSL2 is unaffected — it is detected as Linux and uses the standard `uvx`-based entry.
+- **Windows: `install` auto-configures MCP entries** (11com7): resolves the absolute path to `code-review-graph.exe` via `shutil.which` and adds `PYTHONUTF8=1`, fixing `Invalid JSON: EOF while parsing` / `MCP error -32000: Connection closed` on first connect. WSL2 is unaffected.
+- **Write `cwd` to MCP server entry** (PR #352, pratikjagzap): fixes `graph.db not found` when Claude Code launches `serve` from a different working directory.
+- **Hook graceful degradation + install safety** (PR #354, azizur100389): hooks no longer crash outside a git repo; `install` refuses to overwrite malformed config files; existing hooks are merged rather than replaced (#312, #344, #350).
+- **FastMCP 3.x `local_provider` compat** (PR #394, Maurya): replaces removed `_tool_manager` so the `--tools` filter works on fastmcp ≥ 3.
+- **`get_docs_section` path validation** (PR #378): aligns `--repo` root with `serve --repo` and adds path-traversal validation.
+- **Explicit `User-Agent` on cloud embedding requests** (PR #390, Kevin Hill): prevents 403s from providers that block Python's default urllib agent string.
+- **Restore 8 parser fixes + fastmcp ≥ 3 compat** (PR #365): cherry-picks fixes accidentally reverted by a merge conflict (module-scope CALLS, shebang detection, Databricks CRLF, Julia).
+- **Windows: auto-select ThreadPoolExecutor on MCP stdio** (PR #400, niveku): avoids ProcessPool pipe-handle inheritance deadlock; `stdin=DEVNULL` on all git subprocess calls (closes #46, #136).
+- **Windows: `encoding='utf-8'` on all subprocess calls** (PR #409, suainam): fixes broken output in non-UTF-8 Windows locales (GBK, Shift-JIS, CP1252).
+- **C++ scoped / destructor / operator method names** (PR #403, PR #371, hugo): `Foo::bar`, `~Foo`, and `operator==` extracted correctly.
+- **Kotlin annotations + C# namespace imports** (PR #353, azizur100389): `@Annotation` decorators no longer stripped; `using Foo.Bar;` resolved to file-path edges (#295, #310).
+- **Extend default ignore patterns + nested path matching** (PR #92): `*.bundle.js`, `cdk.out/`, and common build artefact directories skipped by default; safe-anywhere vs. root-relative pattern semantics fixed.
+- **Remote code execution configurable via env var** (PR #397, Yaduttam Pareek): `CRG_ALLOW_REMOTE_EXEC` gates shell-out operations; off by default.
 
-### Added
+### Merged community PRs
 
-- **Nix support** (flake-aware): `.nix` files are parsed via the `nix` tree-sitter grammar shipped with `tree-sitter-language-pack`. Top-level and nested attrset bindings become `Function` nodes with flattened dotted names (e.g. `packages.default`, `devShells.default`). In `flake.nix`, `inputs.<name>.url = "..."` strings emit `IMPORTS_FROM` edges to the URL; `import <path>` and `callPackage <path> <args>` applications in any `.nix` file emit `IMPORTS_FROM` edges (relative paths are resolved against the caller's directory). Adds 7 tests (`TestNixParsing`) and fixtures `tests/fixtures/sample.nix`, `tests/fixtures/sample_module.nix`.
-- **GDScript support** (Godot): `.gd` files are parsed via the `gdscript` tree-sitter grammar shipped with `tree-sitter-language-pack`. Extracts inner classes (`class Name:`), the file-level `class_name` identity, functions (including `static func`), `extends` parent class as an IMPORTS_FROM edge, direct calls (`call`) and method calls (`attribute_call`). Adds 10 tests and `tests/fixtures/sample.gd`.
+- **#335** (gzenz): import-map-aware bare call resolution, `node.extra.decorators` for Python, fuzzy class-name disambiguation by directory prefix, cross-file `ClassName.method` edge resolution, query deduplication + transitive `tests_for` lookup, `*.bundle.js` / `cdk.out/` default ignore patterns.
+- **#352** (pratikjagzap): write `cwd` to MCP server entry so clients find `graph.db`.
+- **#354** (azizur100389): hook graceful degradation + install safety (#312, #344, #350).
+- **#371** (hugo): fix C++ method name extraction for scoped, destructor, and operator definitions.
+- **#381** (mlangford): `.hh` C++ header extension support.
+- **#390** (Kevin Hill): send explicit `User-Agent` on cloud HTTP embedding requests.
+- **#394** (Maurya): FastMCP 3.x `local_provider` compat + `--tools` / `CRG_TOOLS` filter.
+- **#397** (Yaduttam Pareek): make remote code execution configurable via env var.
+- **#403**: fix C++ scoped function name extraction (`field_identifier` node type added).
+- **#412**: flake-aware Nix language support — attrset bindings as `Function` nodes, `IMPORTS_FROM` edges for `inputs.<name>.url` and `import`/`callPackage`.
+- **#421** (Prince): add Bun `bun:test` runtime test fixture for regression coverage.
+- **#422** (Prince Parmar Singh): detect files under `__tests__/` as test nodes.
+- **#423** (Prince): recognise Mocha TDD `suite()` as a test-suite marker.
+- **#424** (Prince): emit `REFERENCES` edges for Python callback arguments (#363).
+- **#353** (azizur100389): preserve Kotlin annotations + resolve C# namespace imports (#295, #310).
+- **#398**: SQL language support — `CREATE TABLE/VIEW/FUNCTION/PROCEDURE` as nodes, `FROM`/`JOIN` as edges.
+- **#252**: PHP / Laravel comprehensive support — Route→Controller mapping, Eloquent relationship edges, Blade template references, PSR-4 namespace resolution, facade static-call edges.
+- **#378**: `get_docs_section` repo root alignment + path-traversal validation.
+- **#365**: restore 8 parser fixes + fastmcp ≥ 3 compat.
+- **#92**: extend default ignore patterns + fix nested path matching.
+- **#61**: CSS / SCSS / LESS parsing — stylesheet rules as nodes, cross-language `STYLES` edges to JS/TS/Vue component files.
+- **#86**: VS Code webview accessibility — ARIA roles, keyboard navigation, WCAG 2.1 AA contrast, distinct D3 symbol shapes per node kind, edge differentiation, keyboard help overlay.
+- **#316**: GDScript (Godot) language support — `.gd` files, inner classes, `class_name`, `static func`, `extends` as `IMPORTS_FROM`.
+- **#323**: ReScript language support — `.res` / `.resi` files, modules, functions, type definitions, open statements.
+- **#255**: SVN repository support — `svn log` / `svn diff` as fallback when git is absent.
+- **#276**: `.ksh` extension + shebang-based language detection for extension-less shell scripts.
+- **#247**: Jedi-based Python call resolution for deeper cross-module call graphs.
+- **#248**: search enrichment via `PreToolUse` hooks — graph context injected automatically without an explicit tool call.
+- **#277**: HTTP streamable transport — `serve --transport http` for non-stdio environments.
+- **#280**: resolve Java imports to file paths for `IMPORTS_FROM` edges.
+- **#321**: OpenAI-compatible embedding provider — `CRG_OPENAI_BASE_URL` / `CRG_OPENAI_API_KEY` / `CRG_OPENAI_MODEL`, works with any OpenAI-compatible gateway.
+- **#245** (rztao): Qoder platform support.
+- **#196**: Cursor hooks support — `.cursor/mcp.json` + Cursor-specific hook scripts.
+- **#366** / **#198**: OpenCode plugin support — `install` writes an OpenCode MCP plugin definition.
+- **#367**: `crg-daemon` multi-repo watch daemon — `crg-daemon start/stop/status/logs`, config via `~/.code-review-graph/watch.toml`.
 
 ## [2.3.2] - 2026-04-14
 
