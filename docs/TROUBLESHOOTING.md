@@ -165,6 +165,12 @@ The graph uses SQLite with WAL mode. If you see lock errors:
 - File watching (`code-review-graph watch`) may have delays on WSL1 due to filesystem event limitations; WSL2 is recommended
 - On Windows native (non-WSL), long path support may need to be enabled: `git config --system core.longpaths true`
 
+### MCP connection errors on Windows (Invalid JSON / Connection Closed)
+
+`code-review-graph install` automatically writes the correct Windows MCP entry: it resolves the absolute `.exe` path and adds `PYTHONUTF8=1`. If you still see `Invalid JSON: EOF while parsing` or `MCP error -32000: Connection closed`, your config was likely created by an older release. Fix it by deleting the `code-review-graph` key from `<repo>/.mcp.json` and re-running `code-review-graph install`.
+
+WSL2 users do not need any special steps — the installer detects WSL as Linux and uses the standard `uvx`-based entry.
+
 ## Community detection requires igraph
 
 - Install with: `pip install code-review-graph[communities]`

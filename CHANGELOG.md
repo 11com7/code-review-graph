@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows: `install` now auto-configures MCP entries for Claude Code correctly.** On Windows, `code-review-graph install` resolves the absolute path to `code-review-graph.exe` via `shutil.which` and adds `PYTHONUTF8=1` to the server entry, fixing `Invalid JSON: EOF while parsing` / `MCP error -32000: Connection closed` errors on first connect. WSL2 is unaffected — it is detected as Linux and uses the standard `uvx`-based entry.
+
 ### Added
 
 - **Nix support** (flake-aware): `.nix` files are parsed via the `nix` tree-sitter grammar shipped with `tree-sitter-language-pack`. Top-level and nested attrset bindings become `Function` nodes with flattened dotted names (e.g. `packages.default`, `devShells.default`). In `flake.nix`, `inputs.<name>.url = "..."` strings emit `IMPORTS_FROM` edges to the URL; `import <path>` and `callPackage <path> <args>` applications in any `.nix` file emit `IMPORTS_FROM` edges (relative paths are resolved against the caller's directory). Adds 7 tests (`TestNixParsing`) and fixtures `tests/fixtures/sample.nix`, `tests/fixtures/sample_module.nix`.

@@ -490,17 +490,23 @@ Installing from a **source tree** (for example `pipx install .`) needs build dep
 **Diagnose (optional):** `python3 scripts/diagnose_pypi_connectivity.py` — if it prints `FAILED`, the issue is environment/network, not a wrong package name in this repo.
 
 ### Windows Configuration Issues (Invalid JSON / Connection Closed)
-If you are using Windows and encounter `Invalid JSON: EOF while parsing` or `MCP error -32000: Connection closed` when connecting via Claude Code, do not use the `cmd /c` wrapper in your config.
+`code-review-graph install` now writes the correct Windows configuration automatically: it resolves the absolute path to `code-review-graph.exe` via `shutil.which` and adds `PYTHONUTF8=1` to the server entry so that the MCP stdio stream is always UTF-8. Re-running `code-review-graph install` after upgrading is enough.
 
-Ensure `fastmcp` is updated to at least `3.2.4+`. Then, configure your `~/.claude.json` to execute the `.exe` directly and pass the UTF-8 environment variable via the config:
+If you built your MCP config entry by hand (or used an older release), you may still see `Invalid JSON: EOF while parsing` or `MCP error -32000: Connection closed`. In that case, delete the `code-review-graph` entry from `<repo>/.mcp.json` and re-run `code-review-graph install` — it will regenerate the entry in the correct format shown below.
+
+Requires `fastmcp >= 3.2.4`. The generated entry looks like this:
 
 ```json
 "code-review-graph": {
-  "command": "C:\\path\\to\\your\\venv\\Scripts\\code-review-graph.exe",
-  "args": ["serve", "--repo", "C:\\path\\to\\your\\project"],
+  "command": "C:\\Users\\you\\.local\\bin\\code-review-graph.exe",
+  "args": ["serve"],
+  "cwd": "C:\\path\\to\\your\\project",
+  "type": "stdio",
   "env": { "PYTHONUTF8": "1" }
 }
 ```
+
+> **WSL2:** The installer detects WSL as Linux and uses the standard `uvx`-based entry — no special steps needed.
 
 ## Contributing
 

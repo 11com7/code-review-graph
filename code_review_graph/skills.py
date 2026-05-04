@@ -31,6 +31,23 @@ def _zed_settings_path() -> Path:
     return Path.home() / ".config" / "zed" / "settings.json"
 
 
+def _detect_windows_exe() -> tuple[str, list[str]] | None:
+    """Return (command, args) for the installed code-review-graph.exe on Windows.
+
+    Resolves the absolute path via ``shutil.which`` so the MCP client can launch
+    the executable directly without a ``cmd /c`` shim layer.  Returns ``None`` on
+    non-Windows platforms or when the executable is not on PATH, allowing the
+    caller to fall through to the cross-platform detection in
+    ``_detect_serve_command()``.
+    """
+    if sys.platform != "win32":
+        return None
+    found = shutil.which("code-review-graph")
+    if not found:
+        return None
+    return found, ["serve"]
+
+
 PLATFORMS: dict[str, dict[str, Any]] = {
     "codex": {
         "name": "Codex",
@@ -169,6 +186,11 @@ def _detect_serve_command() -> tuple[str, list[str]]:
 
     Detection priority
     ------------------
+    0. **Windows direct exe** – on Windows, resolve ``code-review-graph.exe``
+       via ``shutil.which``.  Using the absolute path avoids the ``cmd /c``
+       shim layer and, together with ``PYTHONUTF8=1`` set in
+       :func:`_build_server_entry`, fixes ``Invalid JSON: EOF while parsing``
+       errors in Claude Code on first connect.
     1. **Poetry** – ``POETRY_ACTIVE=1`` OR ``VIRTUAL_ENV`` contains ``"pypoetry"``
        (covers both ``poetry shell`` and ``poetry run``) and ``poetry`` is on PATH
        → ``poetry run code-review-graph serve``
@@ -184,6 +206,11 @@ def _detect_serve_command() -> tuple[str, list[str]]:
     that is currently running, so it resolves correctly inside any virtual
     environment, conda env, or system installation.
     """
+    # 0. Windows: prefer the absolute path to code-review-graph.exe
+    win_exe = _detect_windows_exe()
+    if win_exe is not None:
+        return win_exe
+
     # 1. Poetry (poetry shell or poetry run)
     if _in_poetry_project():
         poetry = shutil.which("poetry")
@@ -220,6 +247,8 @@ def _build_server_entry(plat: dict[str, Any], repo_root: Path, key: str = "") ->
         entry["type"] = "stdio"
     if key == "opencode":
         entry["env"] = []
+    elif sys.platform == "win32" and plat.get("format") != "toml":
+        entry["env"] = {"PYTHONUTF8": "1"}
     return entry
 
 
