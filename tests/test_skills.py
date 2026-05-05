@@ -395,7 +395,7 @@ class TestInstallPlatformConfigs:
         expected_cmd, expected_args = _detect_serve_command()
         assert entry["command"] == expected_cmd
         assert entry["args"] == expected_args
-        assert entry["cwd"] == str(tmp_path)
+        assert entry["cwd"] == tmp_path.as_posix()
 
     @_needs_tomllib
     def test_install_codex_preserves_existing_toml(self, tmp_path):
@@ -421,7 +421,7 @@ class TestInstallPlatformConfigs:
         assert data["mcp_servers"]["other"]["command"] == "other"
         expected_cmd, _ = _detect_serve_command()
         assert data["mcp_servers"]["code-review-graph"]["command"] == expected_cmd
-        assert data["mcp_servers"]["code-review-graph"]["cwd"] == str(tmp_path)
+        assert data["mcp_servers"]["code-review-graph"]["cwd"] == tmp_path.as_posix()
 
     def test_install_codex_no_duplicate(self, tmp_path):
         codex_config = tmp_path / ".codex" / "config.toml"
@@ -466,7 +466,7 @@ class TestInstallPlatformConfigs:
         assert "code-review-graph" in data["mcpServers"]
         entry = data["mcpServers"]["code-review-graph"]
         assert entry["type"] == "stdio"
-        assert entry["cwd"] == str(tmp_path)
+        assert entry["cwd"] == tmp_path.as_posix()
 
     def test_install_windsurf_config(self, tmp_path):
         windsurf_dir = tmp_path / ".codeium" / "windsurf"
@@ -489,7 +489,7 @@ class TestInstallPlatformConfigs:
         assert "type" not in entry
         expected_cmd, _ = _detect_serve_command()
         assert entry["command"] == expected_cmd
-        assert entry["cwd"] == str(tmp_path)
+        assert entry["cwd"] == tmp_path.as_posix()
 
     def test_install_zed_config(self, tmp_path):
         zed_settings = tmp_path / "zed" / "settings.json"
@@ -531,7 +531,7 @@ class TestInstallPlatformConfigs:
         arr_entry = data["mcpServers"][0]
         assert arr_entry["name"] == "code-review-graph"
         assert arr_entry["type"] == "stdio"
-        assert arr_entry["cwd"] == str(tmp_path)
+        assert arr_entry["cwd"] == tmp_path.as_posix()
 
     def test_install_opencode_config(self, tmp_path):
         configured = install_platform_configs(tmp_path, target="opencode")
@@ -541,7 +541,7 @@ class TestInstallPlatformConfigs:
         entry = data["mcpServers"]["code-review-graph"]
         assert entry["type"] == "stdio"
         assert entry["env"] == []
-        assert entry["cwd"] == str(tmp_path)
+        assert entry["cwd"] == tmp_path.as_posix()
 
     def test_install_qwen_config(self, tmp_path):
         """Qwen Code uses ~/.qwen/settings.json with mcpServers (see #83)."""
@@ -562,7 +562,7 @@ class TestInstallPlatformConfigs:
         entry = data["mcpServers"]["code-review-graph"]
         assert entry["type"] == "stdio"
         assert entry["args"][-1] == "serve"
-        assert entry["cwd"] == str(tmp_path)
+        assert entry["cwd"] == tmp_path.as_posix()
 
     def test_install_qwen_preserves_existing_servers(self, tmp_path):
         """Adding qwen should merge with, not clobber, existing mcpServers."""
@@ -677,7 +677,7 @@ class TestInstallPlatformConfigs:
         expected_cmd, expected_args = _detect_serve_command()
         assert data["mcpServers"]["code-review-graph"]["command"] == expected_cmd
         assert data["mcpServers"]["code-review-graph"]["args"] == expected_args
-        assert data["mcpServers"]["code-review-graph"]["cwd"] == str(tmp_path)
+        assert data["mcpServers"]["code-review-graph"]["cwd"] == tmp_path.as_posix()
 
 
 class TestCursorHooksConfig:
@@ -1015,7 +1015,7 @@ class TestKiroPlatform:
         assert "code-review-graph" in data["mcpServers"]
         entry = data["mcpServers"]["code-review-graph"]
         assert entry["type"] == "stdio"
-        assert entry["cwd"] == str(tmp_path)
+        assert entry["cwd"] == tmp_path.as_posix()
 
     def test_install_kiro_preserves_existing_servers(self, tmp_path):
         """Existing mcpServers entries are preserved when adding code-review-graph."""
@@ -1244,7 +1244,7 @@ class TestDetectServeCommand:
     # ------------------------------------------------------------------
 
     def test_detect_windows_exe_found(self, monkeypatch):
-        """On Windows, returns the absolute exe path when found on PATH."""
+        """On Windows, returns the absolute exe path with forward slashes."""
         monkeypatch.setattr("code_review_graph.skills.sys.platform", "win32")
         monkeypatch.setattr(
             "code_review_graph.skills.shutil.which",
@@ -1253,7 +1253,7 @@ class TestDetectServeCommand:
         result = _detect_windows_exe()
         assert result is not None
         cmd, args = result
-        assert cmd == r"C:\Users\user\.local\bin\code-review-graph.exe"
+        assert cmd == "C:/Users/user/.local/bin/code-review-graph.exe"
         assert args == ["serve"]
 
     def test_detect_windows_exe_not_found(self, monkeypatch):
@@ -1284,7 +1284,7 @@ class TestDetectServeCommand:
             lambda x: r"C:\Users\user\.local\bin\code-review-graph.exe" if x == "code-review-graph" else None,
         )
         cmd, args = _detect_serve_command()
-        assert cmd == r"C:\Users\user\.local\bin\code-review-graph.exe"
+        assert cmd == "C:/Users/user/.local/bin/code-review-graph.exe"
         assert args == ["serve"]
 
     def test_detect_serve_command_falls_back_on_windows_without_exe(self, monkeypatch):
@@ -1350,8 +1350,59 @@ class TestBuildServerEntry:
         data = json.loads(mcp_json.read_text(encoding="utf-8"))
         entry = data["mcpServers"]["code-review-graph"]
         assert entry["env"] == {"PYTHONUTF8": "1"}
-        assert entry["command"] == r"C:\tools\code-review-graph.exe"
+        assert entry["command"] == "C:/tools/code-review-graph.exe"
         assert entry["args"] == ["serve"]
+
+    def test_cwd_uses_forward_slashes_on_windows(self, monkeypatch, tmp_path):
+        """On Windows, cwd in the MCP server entry uses forward slashes."""
+        monkeypatch.setattr("code_review_graph.skills.sys.platform", "win32")
+        monkeypatch.setattr(
+            "code_review_graph.skills.shutil.which",
+            lambda x: r"C:\tools\code-review-graph.exe" if x == "code-review-graph" else None,
+        )
+        install_platform_configs(tmp_path, target="claude")
+        mcp_json = tmp_path / ".mcp.json"
+        data = json.loads(mcp_json.read_text(encoding="utf-8"))
+        entry = data["mcpServers"]["code-review-graph"]
+        assert "\\" not in entry["cwd"], "cwd must not contain backslashes"
+        assert "/" in entry["cwd"]
+
+
+class TestGenerateHooksConfigWindows:
+    """Tests for generate_hooks_config() Windows-specific path behaviour."""
+
+    def test_hooks_use_absolute_exe_path_on_windows(self, monkeypatch, tmp_path):
+        """On Windows, hook commands embed the absolute forward-slash exe path."""
+        monkeypatch.setattr("code_review_graph.skills.sys.platform", "win32")
+        monkeypatch.setattr(
+            "code_review_graph.skills.shutil.which",
+            lambda x: r"C:\Users\user\.local\bin\code-review-graph.exe" if x == "code-review-graph" else None,
+        )
+        config = generate_hooks_config(tmp_path)
+        post_cmd = config["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
+        session_cmd = config["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        assert "C:/Users/user/.local/bin/code-review-graph.exe" in post_cmd
+        assert "C:/Users/user/.local/bin/code-review-graph.exe" in session_cmd
+        assert "\\" not in post_cmd, "hook command must not contain backslashes"
+
+    def test_hooks_use_bare_command_on_linux(self, monkeypatch, tmp_path):
+        """On Linux, hook commands keep the bare 'code-review-graph' name."""
+        monkeypatch.setattr("code_review_graph.skills.sys.platform", "linux")
+        config = generate_hooks_config(tmp_path)
+        post_cmd = config["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
+        assert post_cmd.startswith("git rev-parse")
+        assert "code-review-graph update" in post_cmd
+
+    def test_hooks_quote_exe_path_with_spaces(self, monkeypatch, tmp_path):
+        """On Windows, the exe path is JSON-quoted so spaces don't break the command."""
+        monkeypatch.setattr("code_review_graph.skills.sys.platform", "win32")
+        monkeypatch.setattr(
+            "code_review_graph.skills.shutil.which",
+            lambda x: r"C:\Program Files\crg\code-review-graph.exe" if x == "code-review-graph" else None,
+        )
+        config = generate_hooks_config(tmp_path)
+        post_cmd = config["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
+        assert '"C:/Program Files/crg/code-review-graph.exe"' in post_cmd
 
 
 class TestOpenCodePluginContent:

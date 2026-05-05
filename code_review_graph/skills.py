@@ -45,7 +45,7 @@ def _detect_windows_exe() -> tuple[str, list[str]] | None:
     found = shutil.which("code-review-graph")
     if not found:
         return None
-    return found, ["serve"]
+    return found.replace("\\", "/"), ["serve"]
 
 
 PLATFORMS: dict[str, dict[str, Any]] = {
@@ -242,7 +242,7 @@ def _build_server_entry(plat: dict[str, Any], repo_root: Path, key: str = "") ->
         key: Platform key (e.g. ``"opencode"``), used for platform-specific tweaks.
     """
     command, args = _detect_serve_command()
-    entry: dict[str, Any] = {"command": command, "args": args, "cwd": str(repo_root)}
+    entry: dict[str, Any] = {"command": command, "args": args, "cwd": repo_root.as_posix()}
     if plat["needs_type"]:
         entry["type"] = "stdio"
     if key == "opencode":
@@ -589,6 +589,13 @@ def generate_hooks_config(repo_root: Path) -> dict[str, Any]:
     Claude Code event — pre-commit checks are handled by ``install_git_hook``.
     """
     repo_arg = json.dumps(repo_root.resolve().as_posix())
+    # On Windows, use the absolute exe path so Claude Code can launch the hook
+    # without relying on PATH resolution, and JSON-quote it for paths with spaces.
+    if sys.platform == "win32":
+        win_exe = _detect_windows_exe()
+        crg_cmd = json.dumps(win_exe[0]) if win_exe else "code-review-graph"
+    else:
+        crg_cmd = "code-review-graph"
     return {
         "hooks": {
             "PostToolUse": [
@@ -599,7 +606,7 @@ def generate_hooks_config(repo_root: Path) -> dict[str, Any]:
                             "type": "command",
                             "command": (
                                 "git rev-parse --git-dir >/dev/null 2>&1"
-                                f" && code-review-graph update --skip-flows"
+                                f" && {crg_cmd} update --skip-flows"
                                 f" --repo {repo_arg}"
                                 " || true"
                             ),
@@ -616,7 +623,7 @@ def generate_hooks_config(repo_root: Path) -> dict[str, Any]:
                             "type": "command",
                             "command": (
                                 "git rev-parse --git-dir >/dev/null 2>&1"
-                                f" && code-review-graph status --repo {repo_arg}"
+                                f" && {crg_cmd} status --repo {repo_arg}"
                                 " || echo 'Not a git repo, skipping'"
                             ),
                             "timeout": 10,
