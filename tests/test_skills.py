@@ -147,17 +147,20 @@ class TestGenerateHooksConfig:
                 assert "hooks" in entry, f"{hook_type} entry missing 'hooks' array"
                 assert "command" not in entry, f"{hook_type} has bare 'command' outside hooks[]"
 
-    def test_repo_root_embedded_in_commands(self):
+    def test_hook_commands_use_portable_bare_command(self):
         config = generate_hooks_config(Path("/my/project"))
         post_cmd = config["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
         session_cmd = config["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-        assert "/my/project" in post_cmd
-        assert "/my/project" in session_cmd
+        assert "code-review-graph update" in post_cmd
+        assert "code-review-graph status" in session_cmd
+        assert "--repo" not in post_cmd
+        assert "--repo" not in session_cmd
 
-    def test_quotes_repo_paths_with_spaces(self):
+    def test_hook_commands_are_path_independent(self):
         config = generate_hooks_config(Path("/repo with spaces"))
         post_cmd = config["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
-        assert '"' in post_cmd  # path is JSON-encoded so spaces are quoted
+        assert "/repo with spaces" not in post_cmd
+        assert "code-review-graph update" in post_cmd
 
     def test_entries_use_claude_code_hook_schema(self):
         """Regression guard for the Claude Code hook schema.
@@ -466,7 +469,7 @@ class TestInstallPlatformConfigs:
         assert "code-review-graph" in data["mcpServers"]
         entry = data["mcpServers"]["code-review-graph"]
         assert entry["type"] == "stdio"
-        assert entry["cwd"] == tmp_path.as_posix()
+        assert "cwd" not in entry, "project-level cursor config must not contain absolute cwd"
 
     def test_install_windsurf_config(self, tmp_path):
         windsurf_dir = tmp_path / ".codeium" / "windsurf"
@@ -541,7 +544,7 @@ class TestInstallPlatformConfigs:
         entry = data["mcpServers"]["code-review-graph"]
         assert entry["type"] == "stdio"
         assert entry["env"] == []
-        assert entry["cwd"] == tmp_path.as_posix()
+        assert "cwd" not in entry, "project-level opencode config must not contain absolute cwd"
 
     def test_install_qwen_config(self, tmp_path):
         """Qwen Code uses ~/.qwen/settings.json with mcpServers (see #83)."""
@@ -674,10 +677,11 @@ class TestInstallPlatformConfigs:
         assert "mcpServers" in data
         assert "code-review-graph" in data["mcpServers"]
         assert data["mcpServers"]["code-review-graph"]["type"] == "stdio"
-        expected_cmd, expected_args = _detect_serve_command()
-        assert data["mcpServers"]["code-review-graph"]["command"] == expected_cmd
-        assert data["mcpServers"]["code-review-graph"]["args"] == expected_args
-        assert data["mcpServers"]["code-review-graph"]["cwd"] == tmp_path.as_posix()
+        assert data["mcpServers"]["code-review-graph"]["command"] == "code-review-graph"
+        assert data["mcpServers"]["code-review-graph"]["args"] == ["serve"]
+        assert "cwd" not in data["mcpServers"]["code-review-graph"], (
+            "project-level qoder config must not contain absolute cwd"
+        )
 
 
 class TestCursorHooksConfig:
@@ -1015,7 +1019,7 @@ class TestKiroPlatform:
         assert "code-review-graph" in data["mcpServers"]
         entry = data["mcpServers"]["code-review-graph"]
         assert entry["type"] == "stdio"
-        assert entry["cwd"] == tmp_path.as_posix()
+        assert "cwd" not in entry, "project-level kiro config must not contain absolute cwd"
 
     def test_install_kiro_preserves_existing_servers(self, tmp_path):
         """Existing mcpServers entries are preserved when adding code-review-graph."""
@@ -1350,11 +1354,12 @@ class TestBuildServerEntry:
         data = json.loads(mcp_json.read_text(encoding="utf-8"))
         entry = data["mcpServers"]["code-review-graph"]
         assert entry["env"] == {"PYTHONUTF8": "1"}
-        assert entry["command"] == "C:/tools/code-review-graph.exe"
+        assert entry["command"] == "code-review-graph"
         assert entry["args"] == ["serve"]
+        assert "cwd" not in entry, "project-level claude config must not contain absolute cwd"
 
-    def test_cwd_uses_forward_slashes_on_windows(self, monkeypatch, tmp_path):
-        """On Windows, cwd in the MCP server entry uses forward slashes."""
+    def test_project_level_mcp_has_no_cwd_on_windows(self, monkeypatch, tmp_path):
+        """On Windows, project-level .mcp.json omits cwd for portability."""
         monkeypatch.setattr("code_review_graph.skills.sys.platform", "win32")
         monkeypatch.setattr(
             "code_review_graph.skills.shutil.which",
@@ -1364,15 +1369,14 @@ class TestBuildServerEntry:
         mcp_json = tmp_path / ".mcp.json"
         data = json.loads(mcp_json.read_text(encoding="utf-8"))
         entry = data["mcpServers"]["code-review-graph"]
-        assert "\\" not in entry["cwd"], "cwd must not contain backslashes"
-        assert "/" in entry["cwd"]
+        assert "cwd" not in entry
 
 
 class TestGenerateHooksConfigWindows:
     """Tests for generate_hooks_config() Windows-specific path behaviour."""
 
-    def test_hooks_use_absolute_exe_path_on_windows(self, monkeypatch, tmp_path):
-        """On Windows, hook commands embed the absolute forward-slash exe path."""
+    def test_hooks_use_portable_command_on_windows(self, monkeypatch, tmp_path):
+        """On Windows, hook commands use the bare 'code-review-graph' for portability."""
         monkeypatch.setattr("code_review_graph.skills.sys.platform", "win32")
         monkeypatch.setattr(
             "code_review_graph.skills.shutil.which",
@@ -1381,8 +1385,9 @@ class TestGenerateHooksConfigWindows:
         config = generate_hooks_config(tmp_path)
         post_cmd = config["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
         session_cmd = config["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-        assert "C:/Users/user/.local/bin/code-review-graph.exe" in post_cmd
-        assert "C:/Users/user/.local/bin/code-review-graph.exe" in session_cmd
+        assert "code-review-graph update" in post_cmd
+        assert "code-review-graph status" in session_cmd
+        assert "C:/" not in post_cmd, "hook must not embed absolute path"
         assert "\\" not in post_cmd, "hook command must not contain backslashes"
 
     def test_hooks_use_bare_command_on_linux(self, monkeypatch, tmp_path):
@@ -1393,8 +1398,8 @@ class TestGenerateHooksConfigWindows:
         assert post_cmd.startswith("git rev-parse")
         assert "code-review-graph update" in post_cmd
 
-    def test_hooks_quote_exe_path_with_spaces(self, monkeypatch, tmp_path):
-        """On Windows, the exe path is JSON-quoted so spaces don't break the command."""
+    def test_hooks_command_is_portable_with_spaces_in_path(self, monkeypatch, tmp_path):
+        """Hook commands stay portable even when the exe lives in a path with spaces."""
         monkeypatch.setattr("code_review_graph.skills.sys.platform", "win32")
         monkeypatch.setattr(
             "code_review_graph.skills.shutil.which",
@@ -1402,7 +1407,8 @@ class TestGenerateHooksConfigWindows:
         )
         config = generate_hooks_config(tmp_path)
         post_cmd = config["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
-        assert '"C:/Program Files/crg/code-review-graph.exe"' in post_cmd
+        assert "code-review-graph update" in post_cmd
+        assert "Program Files" not in post_cmd
 
 
 class TestOpenCodePluginContent:

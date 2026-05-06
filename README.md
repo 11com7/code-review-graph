@@ -42,6 +42,11 @@ code-review-graph build            # parse your codebase
 
 One command sets up everything. `install` detects which AI coding tools you have, writes the correct MCP configuration for each one, and injects graph-aware instructions into your platform rules. Restart your editor/tool after installing.
 
+> **PATH note:** `uv tool install` places the binary in `~/.local/bin` (Linux/macOS) or
+> `%USERPROFILE%\.local\bin` (Windows). If `code-review-graph` is not found after install,
+> run `uv tool update-shell` (or add the directory to your PATH manually) and open a new
+> terminal session.
+
 <p align="center">
   <img src="diagrams/diagram8_supported_platforms.png" alt="One Install, Every Platform: auto-detects Codex, Claude Code, Cursor, Windsurf, Zed, Continue, OpenCode, Antigravity, Qwen, Qoder, and Kiro" width="85%" />
 </p>

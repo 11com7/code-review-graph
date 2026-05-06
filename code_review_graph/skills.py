@@ -234,15 +234,30 @@ def _detect_serve_command() -> tuple[str, list[str]]:
 def _build_server_entry(plat: dict[str, Any], repo_root: Path, key: str = "") -> dict[str, Any]:
     """Build the MCP server entry for a platform.
 
+    For project-level config files (committed to the repo), the command is
+    always ``"code-review-graph"`` so the config is portable across machines
+    and users.  The MCP client is expected to launch the server from the
+    project root (Claude Code does this automatically), so ``cwd`` is omitted
+    for project-level platforms.
+
+    For user-home-level configs (codex, windsurf, zed, continue, antigravity,
+    qwen) the full detection chain is used and ``cwd`` is included because
+    these clients may not set CWD to the project root automatically.
+
     Args:
         plat: Platform metadata dict from PLATFORMS.
-        repo_root: Absolute path to the project root.  Written as ``cwd`` so
-            that MCP clients always launch ``code-review-graph serve`` from the
-            correct directory and can locate ``.code-review-graph/graph.db``.
+        repo_root: Absolute path to the project root.
         key: Platform key (e.g. ``"opencode"``), used for platform-specific tweaks.
     """
-    command, args = _detect_serve_command()
-    entry: dict[str, Any] = {"command": command, "args": args, "cwd": repo_root.as_posix()}
+    _project_level_keys = {"claude", "cursor", "opencode", "kiro", "qoder"}
+    if key in _project_level_keys:
+        command, args = "code-review-graph", ["serve"]
+    else:
+        command, args = _detect_serve_command()
+
+    entry: dict[str, Any] = {"command": command, "args": args}
+    if key not in _project_level_keys:
+        entry["cwd"] = repo_root.as_posix()
     if plat["needs_type"]:
         entry["type"] = "stdio"
     if key == "opencode":
@@ -588,14 +603,6 @@ def generate_hooks_config(repo_root: Path) -> dict[str, Any]:
     ``hooks`` array. Timeouts are in seconds. ``PreCommit`` is not a valid
     Claude Code event — pre-commit checks are handled by ``install_git_hook``.
     """
-    repo_arg = json.dumps(repo_root.resolve().as_posix())
-    # On Windows, use the absolute exe path so Claude Code can launch the hook
-    # without relying on PATH resolution, and JSON-quote it for paths with spaces.
-    if sys.platform == "win32":
-        win_exe = _detect_windows_exe()
-        crg_cmd = json.dumps(win_exe[0]) if win_exe else "code-review-graph"
-    else:
-        crg_cmd = "code-review-graph"
     return {
         "hooks": {
             "PostToolUse": [
@@ -606,8 +613,7 @@ def generate_hooks_config(repo_root: Path) -> dict[str, Any]:
                             "type": "command",
                             "command": (
                                 "git rev-parse --git-dir >/dev/null 2>&1"
-                                f" && {crg_cmd} update --skip-flows"
-                                f" --repo {repo_arg}"
+                                " && code-review-graph update --skip-flows"
                                 " || true"
                             ),
                             "timeout": 30,
@@ -623,7 +629,7 @@ def generate_hooks_config(repo_root: Path) -> dict[str, Any]:
                             "type": "command",
                             "command": (
                                 "git rev-parse --git-dir >/dev/null 2>&1"
-                                f" && {crg_cmd} status --repo {repo_arg}"
+                                " && code-review-graph status"
                                 " || echo 'Not a git repo, skipping'"
                             ),
                             "timeout": 10,

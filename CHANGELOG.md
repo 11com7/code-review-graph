@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Portable `install` config — no more machine-specific paths in committed files** (11com7):
+  `.mcp.json` and hook commands in `.claude/settings.json` no longer embed absolute
+  executable paths or `--repo <abs-path>` arguments.  The committed files now use a
+  plain `"code-review-graph"` command so any teammate can clone the repo and pick up
+  the config without modification.  Platforms that store config in the user's home
+  directory (Codex, Windsurf, Zed, Continue) are unaffected and still receive the full
+  detection chain.
+
 ## [2.3.2+11com7.1] - 2026-05-04
 
 Curated 11com7 fork release — upstream 2.3.2 plus community PRs from the upstream review queue and Windows-specific fixes.
