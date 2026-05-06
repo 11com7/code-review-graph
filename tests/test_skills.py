@@ -286,6 +286,26 @@ class TestInstallHooks:
         assert data["customSetting"] is True
         assert "hooks" in data
 
+    def test_local_flag_writes_settings_local_json(self, tmp_path):
+        install_hooks(tmp_path, local=True)
+        assert (tmp_path / ".claude" / "settings.local.json").exists()
+        assert not (tmp_path / ".claude" / "settings.json").exists()
+
+    def test_local_flag_writes_correct_hooks(self, tmp_path):
+        install_hooks(tmp_path, local=True)
+        data = json.loads((tmp_path / ".claude" / "settings.local.json").read_text())
+        assert "PostToolUse" in data["hooks"]
+        assert "SessionStart" in data["hooks"]
+
+    def test_local_flag_backup_uses_local_suffix(self, tmp_path):
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir(parents=True)
+        (settings_dir / "settings.local.json").write_text('{"hooks": {}}')
+
+        install_hooks(tmp_path, local=True)
+
+        assert (settings_dir / "settings.local.json.bak").exists()
+
 
 class TestInjectClaudeMd:
     def test_creates_section_in_new_file(self, tmp_path):

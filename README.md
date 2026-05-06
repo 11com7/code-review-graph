@@ -60,6 +60,15 @@ code-review-graph install --platform claude-code  # configure only Claude Code
 code-review-graph install --platform kiro         # configure only Kiro
 ```
 
+By default, `install` writes portable configs (bare `code-review-graph` command, no
+absolute paths) to `.mcp.json` and `.claude/settings.json` — safe to commit.
+Use `--local` to write hooks to `.claude/settings.local.json` (gitignored) instead,
+which is useful for machine-specific overrides:
+
+```bash
+code-review-graph install --local    # writes to settings.local.json (not committed)
+```
+
 Requires Python 3.10+ and [uv](https://docs.astral.sh/uv/). The MCP config is generated to use `uvx` automatically.
 
 Then open your project and ask your AI assistant:

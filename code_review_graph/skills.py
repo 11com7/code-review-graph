@@ -680,8 +680,8 @@ fi
     return hook_path
 
 
-def install_hooks(repo_root: Path, platform: str = "claude") -> None:
-    """Write hooks config to platform-specific settings.json.
+def install_hooks(repo_root: Path, platform: str = "claude", local: bool = False) -> None:
+    """Write hooks config to platform-specific settings file.
 
     Merges new hook entries into existing settings, preserving both
     non-hook configuration and user-defined hooks.  A backup of the
@@ -690,19 +690,22 @@ def install_hooks(repo_root: Path, platform: str = "claude") -> None:
     Args:
         repo_root: Repository root directory.
         platform: Target platform ("claude" or "qoder").
+        local: When True, write to ``settings.local.json`` (gitignored,
+            user-specific) instead of ``settings.json``.
     """
     if platform == "qoder":
         settings_dir = repo_root / ".qoder"
     else:
         settings_dir = repo_root / ".claude"
     settings_dir.mkdir(parents=True, exist_ok=True)
-    settings_path = settings_dir / "settings.json"
+    filename = "settings.local.json" if local else "settings.json"
+    settings_path = settings_dir / filename
 
     existing: dict[str, Any] = {}
     if settings_path.exists():
         try:
             existing = json.loads(settings_path.read_text(encoding="utf-8", errors="replace"))
-            backup_path = settings_dir / "settings.json.bak"
+            backup_path = settings_dir / f"{filename}.bak"
             shutil.copy2(settings_path, backup_path)
             logger.info("Backed up existing settings to %s", backup_path)
         except (json.JSONDecodeError, OSError) as exc:

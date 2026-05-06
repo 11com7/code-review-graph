@@ -12,6 +12,10 @@
   directory (Codex, Windsurf, Zed, Continue) are unaffected and still receive the full
   detection chain.
 
+- **`--local` flag for `install`/`init`**: writes hooks to `.claude/settings.local.json`
+  (gitignored, user-specific) instead of `.claude/settings.json` when machine-specific
+  overrides are desired without committing them.
+
 ## [2.3.2+11com7.1] - 2026-05-04
 
 Curated 11com7 fork release — upstream 2.3.2 plus community PRs from the upstream review queue and Windows-specific fixes.
