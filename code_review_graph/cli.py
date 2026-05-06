@@ -283,11 +283,13 @@ def _handle_init(args: argparse.Namespace) -> None:
         qoder_skills_dir = install_qoder_skills(repo_root)
         if qoder_skills_dir:
             print(f"Installed Qoder skills to {qoder_skills_dir}")
+    local_hooks = getattr(args, "local", False)
     if not skip_hooks and target in ("claude", "qoder", "all"):
         platforms_to_install = [target] if target != "all" else ["claude", "qoder"]
         for plat in platforms_to_install:
-            install_hooks(repo_root, platform=plat)
-            print(f"Installed hooks in {repo_root / f'.{plat}' / 'settings.json'}")
+            install_hooks(repo_root, platform=plat, local=local_hooks)
+            filename = "settings.local.json" if local_hooks else "settings.json"
+            print(f"Installed hooks in {repo_root / f'.{plat}' / filename}")
         git_hook = install_git_hook(repo_root)
         if git_hook:
             print(f"Installed git pre-commit hook in {git_hook}")
@@ -379,6 +381,14 @@ def main() -> None:
         default="all",
         help="Target platform for MCP config (default: all detected)",
     )
+    install_cmd.add_argument(
+        "--local",
+        action="store_true",
+        help=(
+            "Write hooks to settings.local.json (gitignored, user-specific) "
+            "instead of settings.json"
+        ),
+    )
 
     init_cmd = sub.add_parser("init", help="Alias for install")
     init_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
@@ -416,6 +426,14 @@ def main() -> None:
         choices=_PLATFORM_CHOICES,
         default="all",
         help="Target platform for MCP config (default: all detected)",
+    )
+    init_cmd.add_argument(
+        "--local",
+        action="store_true",
+        help=(
+            "Write hooks to settings.local.json (gitignored, user-specific) "
+            "instead of settings.json"
+        ),
     )
 
     # build

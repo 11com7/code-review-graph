@@ -42,6 +42,11 @@ code-review-graph build            # parse your codebase
 
 One command sets up everything. `install` detects which AI coding tools you have, writes the correct MCP configuration for each one, and injects graph-aware instructions into your platform rules. Restart your editor/tool after installing.
 
+> **PATH note:** `uv tool install` places the binary in `~/.local/bin` (Linux/macOS) or
+> `%USERPROFILE%\.local\bin` (Windows). If `code-review-graph` is not found after install,
+> run `uv tool update-shell` (or add the directory to your PATH manually) and open a new
+> terminal session.
+
 <p align="center">
   <img src="diagrams/diagram8_supported_platforms.png" alt="One Install, Every Platform: auto-detects Codex, Claude Code, Cursor, Windsurf, Zed, Continue, OpenCode, Antigravity, Qwen, Qoder, and Kiro" width="85%" />
 </p>
@@ -53,6 +58,15 @@ code-review-graph install --platform codex       # configure only Codex
 code-review-graph install --platform cursor      # configure only Cursor
 code-review-graph install --platform claude-code  # configure only Claude Code
 code-review-graph install --platform kiro         # configure only Kiro
+```
+
+By default, `install` writes portable configs (bare `code-review-graph` command, no
+absolute paths) to `.mcp.json` and `.claude/settings.json` — safe to commit.
+Use `--local` to write hooks to `.claude/settings.local.json` (gitignored) instead,
+which is useful for machine-specific overrides:
+
+```bash
+code-review-graph install --local    # writes to settings.local.json (not committed)
 ```
 
 Requires Python 3.10+ and [uv](https://docs.astral.sh/uv/). The MCP config is generated to use `uvx` automatically.

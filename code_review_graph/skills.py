@@ -234,15 +234,30 @@ def _detect_serve_command() -> tuple[str, list[str]]:
 def _build_server_entry(plat: dict[str, Any], repo_root: Path, key: str = "") -> dict[str, Any]:
     """Build the MCP server entry for a platform.
 
+    For project-level config files (committed to the repo), the command is
+    always ``"code-review-graph"`` so the config is portable across machines
+    and users.  The MCP client is expected to launch the server from the
+    project root (Claude Code does this automatically), so ``cwd`` is omitted
+    for project-level platforms.
+
+    For user-home-level configs (codex, windsurf, zed, continue, antigravity,
+    qwen) the full detection chain is used and ``cwd`` is included because
+    these clients may not set CWD to the project root automatically.
+
     Args:
         plat: Platform metadata dict from PLATFORMS.
-        repo_root: Absolute path to the project root.  Written as ``cwd`` so
-            that MCP clients always launch ``code-review-graph serve`` from the
-            correct directory and can locate ``.code-review-graph/graph.db``.
+        repo_root: Absolute path to the project root.
         key: Platform key (e.g. ``"opencode"``), used for platform-specific tweaks.
     """
-    command, args = _detect_serve_command()
-    entry: dict[str, Any] = {"command": command, "args": args, "cwd": repo_root.as_posix()}
+    _project_level_keys = {"claude", "cursor", "opencode", "kiro", "qoder"}
+    if key in _project_level_keys:
+        command, args = "code-review-graph", ["serve"]
+    else:
+        command, args = _detect_serve_command()
+
+    entry: dict[str, Any] = {"command": command, "args": args}
+    if key not in _project_level_keys:
+        entry["cwd"] = repo_root.as_posix()
     if plat["needs_type"]:
         entry["type"] = "stdio"
     if key == "opencode":
@@ -588,14 +603,6 @@ def generate_hooks_config(repo_root: Path) -> dict[str, Any]:
     ``hooks`` array. Timeouts are in seconds. ``PreCommit`` is not a valid
     Claude Code event — pre-commit checks are handled by ``install_git_hook``.
     """
-    repo_arg = json.dumps(repo_root.resolve().as_posix())
-    # On Windows, use the absolute exe path so Claude Code can launch the hook
-    # without relying on PATH resolution, and JSON-quote it for paths with spaces.
-    if sys.platform == "win32":
-        win_exe = _detect_windows_exe()
-        crg_cmd = json.dumps(win_exe[0]) if win_exe else "code-review-graph"
-    else:
-        crg_cmd = "code-review-graph"
     return {
         "hooks": {
             "PostToolUse": [
@@ -606,8 +613,7 @@ def generate_hooks_config(repo_root: Path) -> dict[str, Any]:
                             "type": "command",
                             "command": (
                                 "git rev-parse --git-dir >/dev/null 2>&1"
-                                f" && {crg_cmd} update --skip-flows"
-                                f" --repo {repo_arg}"
+                                " && code-review-graph update --skip-flows"
                                 " || true"
                             ),
                             "timeout": 30,
@@ -623,7 +629,7 @@ def generate_hooks_config(repo_root: Path) -> dict[str, Any]:
                             "type": "command",
                             "command": (
                                 "git rev-parse --git-dir >/dev/null 2>&1"
-                                f" && {crg_cmd} status --repo {repo_arg}"
+                                " && code-review-graph status"
                                 " || echo 'Not a git repo, skipping'"
                             ),
                             "timeout": 10,
@@ -674,8 +680,22 @@ fi
     return hook_path
 
 
-def install_hooks(repo_root: Path, platform: str = "claude") -> None:
-    """Write hooks config to platform-specific settings.json.
+def _crg_hook_subcommand(command: str) -> str | None:
+    """Return the crg subcommand found in a hook command string, or None.
+
+    Used to deduplicate hooks by subcommand so that re-running install
+    replaces stale absolute-path hooks rather than appending duplicates.
+    """
+    if "code-review-graph" not in command.lower():
+        return None
+    for sub in ("update", "status", "detect-changes"):
+        if sub in command:
+            return sub
+    return None
+
+
+def install_hooks(repo_root: Path, platform: str = "claude", local: bool = False) -> None:
+    """Write hooks config to platform-specific settings file.
 
     Merges new hook entries into existing settings, preserving both
     non-hook configuration and user-defined hooks.  A backup of the
@@ -684,19 +704,22 @@ def install_hooks(repo_root: Path, platform: str = "claude") -> None:
     Args:
         repo_root: Repository root directory.
         platform: Target platform ("claude" or "qoder").
+        local: When True, write to ``settings.local.json`` (gitignored,
+            user-specific) instead of ``settings.json``.
     """
     if platform == "qoder":
         settings_dir = repo_root / ".qoder"
     else:
         settings_dir = repo_root / ".claude"
     settings_dir.mkdir(parents=True, exist_ok=True)
-    settings_path = settings_dir / "settings.json"
+    filename = "settings.local.json" if local else "settings.json"
+    settings_path = settings_dir / filename
 
     existing: dict[str, Any] = {}
     if settings_path.exists():
         try:
             existing = json.loads(settings_path.read_text(encoding="utf-8", errors="replace"))
-            backup_path = settings_dir / "settings.json.bak"
+            backup_path = settings_dir / f"{filename}.bak"
             shutil.copy2(settings_path, backup_path)
             logger.info("Backed up existing settings to %s", backup_path)
         except (json.JSONDecodeError, OSError) as exc:
@@ -711,11 +734,24 @@ def install_hooks(repo_root: Path, platform: str = "claude") -> None:
     merged_hooks = dict(existing_hooks)
     for hook_name, hook_entries in hooks_config.get("hooks", {}).items():
         if isinstance(merged_hooks.get(hook_name), list):
-            merged_list = list(merged_hooks[hook_name])
+            existing_list = list(merged_hooks[hook_name])
+            # Remove stale crg hooks (matched by subcommand) before appending
+            # the updated portable versions.  Non-crg entries are preserved.
+            new_subcommands = set()
             for entry in hook_entries:
-                if entry not in merged_list:
-                    merged_list.append(entry)
-            merged_hooks[hook_name] = merged_list
+                for inner in entry.get("hooks", []):
+                    sub = _crg_hook_subcommand(inner.get("command", ""))
+                    if sub:
+                        new_subcommands.add(sub)
+
+            def _is_stale_crg_entry(e: dict) -> bool:
+                for inner in e.get("hooks", []):
+                    if _crg_hook_subcommand(inner.get("command", "")) in new_subcommands:
+                        return True
+                return False
+
+            filtered = [e for e in existing_list if not _is_stale_crg_entry(e)]
+            merged_hooks[hook_name] = filtered + hook_entries
         else:
             merged_hooks[hook_name] = hook_entries
 
