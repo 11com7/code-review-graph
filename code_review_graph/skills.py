@@ -680,6 +680,20 @@ fi
     return hook_path
 
 
+def _crg_hook_subcommand(command: str) -> str | None:
+    """Return the crg subcommand found in a hook command string, or None.
+
+    Used to deduplicate hooks by subcommand so that re-running install
+    replaces stale absolute-path hooks rather than appending duplicates.
+    """
+    if "code-review-graph" not in command.lower():
+        return None
+    for sub in ("update", "status", "detect-changes"):
+        if sub in command:
+            return sub
+    return None
+
+
 def install_hooks(repo_root: Path, platform: str = "claude", local: bool = False) -> None:
     """Write hooks config to platform-specific settings file.
 
@@ -720,11 +734,24 @@ def install_hooks(repo_root: Path, platform: str = "claude", local: bool = False
     merged_hooks = dict(existing_hooks)
     for hook_name, hook_entries in hooks_config.get("hooks", {}).items():
         if isinstance(merged_hooks.get(hook_name), list):
-            merged_list = list(merged_hooks[hook_name])
+            existing_list = list(merged_hooks[hook_name])
+            # Remove stale crg hooks (matched by subcommand) before appending
+            # the updated portable versions.  Non-crg entries are preserved.
+            new_subcommands = set()
             for entry in hook_entries:
-                if entry not in merged_list:
-                    merged_list.append(entry)
-            merged_hooks[hook_name] = merged_list
+                for inner in entry.get("hooks", []):
+                    sub = _crg_hook_subcommand(inner.get("command", ""))
+                    if sub:
+                        new_subcommands.add(sub)
+
+            def _is_stale_crg_entry(e: dict) -> bool:
+                for inner in e.get("hooks", []):
+                    if _crg_hook_subcommand(inner.get("command", "")) in new_subcommands:
+                        return True
+                return False
+
+            filtered = [e for e in existing_list if not _is_stale_crg_entry(e)]
+            merged_hooks[hook_name] = filtered + hook_entries
         else:
             merged_hooks[hook_name] = hook_entries
 

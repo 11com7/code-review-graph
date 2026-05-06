@@ -306,6 +306,39 @@ class TestInstallHooks:
 
         assert (settings_dir / "settings.local.json.bak").exists()
 
+    def test_reinstall_replaces_stale_absolute_path_hooks(self, tmp_path):
+        """Re-running install must replace old absolute-path hooks, not duplicate."""
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir(parents=True)
+        stale_hook = {
+            "matcher": "Edit|Write|Bash",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": (
+                        "git rev-parse --git-dir >/dev/null 2>&1"
+                        ' && "C:/Users/dp/.local/bin/code-review-graph.EXE"'
+                        " update --skip-flows"
+                        ' --repo "/my/project"'
+                        " || true"
+                    ),
+                    "timeout": 30,
+                }
+            ],
+        }
+        existing = {"hooks": {"PostToolUse": [stale_hook]}}
+        (settings_dir / "settings.json").write_text(json.dumps(existing))
+
+        install_hooks(tmp_path)
+
+        data = json.loads((settings_dir / "settings.json").read_text())
+        post_hooks = data["hooks"]["PostToolUse"]
+        # Must have exactly one entry after migration, not two
+        assert len(post_hooks) == 1, "stale hook must be replaced, not duplicated"
+        cmd = post_hooks[0]["hooks"][0]["command"]
+        assert "code-review-graph update" in cmd
+        assert "C:/Users" not in cmd
+
 
 class TestInjectClaudeMd:
     def test_creates_section_in_new_file(self, tmp_path):

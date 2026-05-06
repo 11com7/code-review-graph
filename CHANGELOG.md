@@ -16,6 +16,9 @@
   (gitignored, user-specific) instead of `.claude/settings.json` when machine-specific
   overrides are desired without committing them.
 
+- **Migration on re-install**: re-running `install` now replaces stale absolute-path hooks
+  from earlier versions rather than appending duplicate entries.
+
 ## [2.3.2+11com7.1] - 2026-05-04
 
 Curated 11com7 fork release — upstream 2.3.2 plus community PRs from the upstream review queue and Windows-specific fixes.
