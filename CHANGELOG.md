@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.3.3+11com7.4] - 2026-05-18
+
 ### Fixed
 
 - **Windows: MCP server startup blocked by embedding model pre-warm** (11com7): the
