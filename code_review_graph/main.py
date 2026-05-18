@@ -1066,21 +1066,39 @@ def main(
     # background thread is still loading it simply blocks on that lock — it
     # never loads DLLs itself, which is the pattern that caused the original
     # Windows deadlock. See: #46, #136
-    _prewarm_model = os.environ.get("CRG_EMBEDDING_MODEL")
-    if _prewarm_model and sys.platform == "win32":
-        import threading as _threading
+    if sys.platform == "win32":
+        # Always pre-warm the local embedding model on Windows, regardless of
+        # whether CRG_EMBEDDING_MODEL is explicitly set. Without this, the first
+        # semantic search call triggers DLL loading inside asyncio.to_thread,
+        # which can deadlock: Windows holds the DLL Loader Lock during new-thread
+        # creation (DLL_THREAD_ATTACH), so if the thread pool needs to spawn a new
+        # worker while DLLs are being loaded concurrently, both sides wait forever.
+        # Pre-warming before asyncio starts avoids the race entirely. See: #46, #136
+        _prewarm_model = os.environ.get("CRG_EMBEDDING_MODEL")
+        try:
+            import sentence_transformers as _st_check  # noqa: F401
+            _st_available = True
+        except ImportError:
+            _st_available = False
+        if _st_available:
+            import threading as _threading
 
-        def _do_prewarm(model_name: str) -> None:
-            try:
-                from .embeddings import LocalEmbeddingProvider
-                LocalEmbeddingProvider(model_name=model_name)._get_model()
-                logger.info("Pre-warmed embedding model: %s", model_name)
-            except Exception as exc:
-                logger.warning("Could not pre-warm embedding model: %s", exc)
+            from .embeddings import LOCAL_DEFAULT_MODEL as _DEFAULT_MODEL
 
-        _threading.Thread(
-            target=_do_prewarm, args=(_prewarm_model,), daemon=True, name="crg-prewarm"
-        ).start()
+            def _do_prewarm(model_name: str) -> None:
+                try:
+                    from .embeddings import LocalEmbeddingProvider
+                    LocalEmbeddingProvider(model_name=model_name)._get_model()
+                    logger.info("Pre-warmed embedding model: %s", model_name)
+                except Exception as exc:
+                    logger.warning("Could not pre-warm embedding model: %s", exc)
+
+            _threading.Thread(
+                target=_do_prewarm,
+                args=(_prewarm_model or _DEFAULT_MODEL,),
+                daemon=True,
+                name="crg-prewarm",
+            ).start()
 
     try:
         if transport == "stdio":

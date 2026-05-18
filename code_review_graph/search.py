@@ -8,8 +8,10 @@ boosting for relevance tuning.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import sqlite3
+import sys
 from typing import Any, Optional
 
 from .graph import GraphStore, _sanitize_name
@@ -189,6 +191,22 @@ def _embedding_search(
         from .embeddings import EmbeddingStore
     except ImportError:
         return []
+
+    # On Windows, avoid triggering DLL loading inside a thread-pool thread.
+    # asyncio.to_thread creates a new pool thread on demand; Windows holds the
+    # DLL Loader Lock during DLL_THREAD_ATTACH, which serializes with any
+    # concurrent DLL loading (e.g. PyTorch/sentence-transformers in the pre-warm
+    # thread). If the model isn't cached yet, fall back to FTS5 instead of
+    # deadlocking the event loop. See: #46, #136
+    if sys.platform == "win32":
+        from .embeddings import LOCAL_DEFAULT_MODEL, _local_model_cache
+        _model_key = model or os.environ.get("CRG_EMBEDDING_MODEL", LOCAL_DEFAULT_MODEL)
+        if _model_key not in _local_model_cache:
+            logger.debug(
+                "Embedding model %r not yet loaded; skipping embedding search on Windows",
+                _model_key,
+            )
+            return []
 
     try:
         emb_store = EmbeddingStore(store.db_path, provider=provider, model=model)
