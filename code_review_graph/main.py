@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -1048,6 +1049,20 @@ def main(
 
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+    # Pre-warm local embedding model on the main thread before the event loop
+    # starts. On Windows, loading PyTorch (sentence-transformers) from a
+    # ThreadPoolExecutor thread deadlocks when the asyncio event loop is already
+    # running with WindowsSelectorEventLoopPolicy. Populating _local_model_cache
+    # here avoids any native DLL loading inside asyncio.to_thread. See: #46, #136
+    _prewarm_model = os.environ.get("CRG_EMBEDDING_MODEL")
+    if _prewarm_model and sys.platform == "win32":
+        try:
+            from .embeddings import LocalEmbeddingProvider
+            LocalEmbeddingProvider(model_name=_prewarm_model)._get_model()
+            logger.info("Pre-warmed embedding model: %s", _prewarm_model)
+        except Exception as e:
+            logger.warning("Could not pre-warm embedding model: %s", e)
 
     try:
         if transport == "stdio":
