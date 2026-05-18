@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows: `semantic_search_nodes_tool` no longer hangs the MCP server** (11com7): the tool
+  was defined as a plain sync function, causing the FastMCP stdio event loop to freeze for the
+  full duration of embedding inference and similarity computation (~6–7 s on large graphs).
+  On Windows with `WindowsSelectorEventLoopPolicy` this silently blocked the server and the
+  JSON-RPC response was never sent.  Fixed by converting the tool to `async def` and delegating
+  the blocking work via `asyncio.to_thread`, matching the existing pattern already used in
+  `embed_graph_tool` (see #46, #136).
+  As a second improvement, `EmbeddingStore.search()` now computes cosine similarities via a
+  single numpy matrix multiplication (`matrix @ query_vec`) instead of a Python `for` loop.
+  For 26,832 nodes × 384 dimensions this eliminates ~31 M Python float operations per query
+  and reduces search time from ~6 s to well under 1 s.
+
 ### Changed
 
 - **Portable `install` config — no more machine-specific paths in committed files** (11com7):
