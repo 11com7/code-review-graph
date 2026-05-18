@@ -89,3 +89,7 @@ SCALING_AND_TOKEN_EFFICIENCY_PLAN.md
 # Beads / Dolt files (added by bd init)
 .dolt/
 .beads-credential-key
+
+# Local environment overrides (not for upstream)
+.env
+.env.local

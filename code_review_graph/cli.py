@@ -362,6 +362,11 @@ def _handle_data_dir_option(args, repo_root: Path) -> None:
 
 def main() -> None:
     """Main CLI entry point."""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
     ap = argparse.ArgumentParser(
         prog="code-review-graph",
         description="Persistent incremental knowledge graph for code reviews",

@@ -1029,6 +1029,11 @@ def main(
         host: Bind address when using HTTP (required for HTTP; set by CLI).
         port: Port when using HTTP (required for HTTP; set by CLI).
     """
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
     global _default_repo_root
     root = Path(repo_root) if repo_root else find_project_root()
     _default_repo_root = str(root)
