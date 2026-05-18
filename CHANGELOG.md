@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [2.3.3+11com7.1] - 2026-05-18
+
+Curated 11com7 fork release — upstream 2.3.3 plus Windows-specific fixes and portable install improvements.
+
 ### Fixed
 
 - **Windows: `semantic_search_nodes_tool` no longer hangs the MCP server** (11com7): the tool
@@ -32,6 +36,10 @@
 
 - **Migration on re-install**: re-running `install` now replaces stale absolute-path hooks
   from earlier versions rather than appending duplicate entries.
+
+### Upstream
+
+Merges upstream v2.3.3 — see `[2.3.3]` entry below for the full upstream release notes.
 
 ## [2.3.2+11com7.1] - 2026-05-04
 
