@@ -808,27 +808,32 @@ class EmbeddingStore:
         if not self.provider:
             return []
 
-        provider_name = self.provider.name
-        query_vec = self.provider.embed_query(query)
+        import numpy as np
 
-        # Process in chunks, only matching current provider
-        scored: list[tuple[str, float]] = []
-        cursor = self._conn.execute(
+        provider_name = self.provider.name
+        query_vec = np.array(self.provider.embed_query(query), dtype=np.float32)
+
+        rows = self._conn.execute(
             "SELECT qualified_name, vector FROM embeddings WHERE provider = ?",
             (provider_name,),
-        )
-        chunk_size = 500
-        while True:
-            rows = cursor.fetchmany(chunk_size)
-            if not rows:
-                break
-            for row in rows:
-                vec = _decode_vector(row["vector"])
-                sim = _cosine_similarity(query_vec, vec)
-                scored.append((row["qualified_name"], sim))
+        ).fetchall()
 
-        scored.sort(key=lambda x: x[1], reverse=True)
-        return scored[:limit]
+        if not rows:
+            return []
+
+        qnames = [r["qualified_name"] for r in rows]
+        matrix = np.frombuffer(
+            b"".join(r["vector"] for r in rows),
+            dtype=np.float32,
+        ).reshape(len(rows), -1)
+
+        dots = matrix @ query_vec
+        norms = np.linalg.norm(matrix, axis=1) * np.linalg.norm(query_vec)
+        norms = np.where(norms == 0, 1e-10, norms)
+        scores = (dots / norms).tolist()
+
+        ranked = sorted(zip(qnames, scores), key=lambda x: x[1], reverse=True)
+        return ranked[:limit]
 
     def remove_node(self, qualified_name: str) -> None:
         self._conn.execute(

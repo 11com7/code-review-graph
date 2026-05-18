@@ -277,7 +277,7 @@ def get_review_context_tool(
 
 
 @mcp.tool()
-def semantic_search_nodes_tool(
+async def semantic_search_nodes_tool(
     query: str,
     kind: Optional[str] = None,
     limit: int = 20,
@@ -294,6 +294,11 @@ def semantic_search_nodes_tool(
     to FTS5 / keyword matching when no matching embeddings exist for the given
     provider.
 
+    Runs the blocking embedding inference and similarity computation in a thread
+    via ``asyncio.to_thread`` so the stdio event loop stays responsive — without
+    this wrapper, searching a large graph would silently hang the MCP server on
+    Windows. See: #46, #136.
+
     Args:
         query: Search string to match against node names.
         kind: Optional filter: File, Class, Function, Type, or Test.
@@ -306,9 +311,15 @@ def semantic_search_nodes_tool(
                   or "minimax". Must match the provider used during embed_graph.
         detail_level: "standard" for full output, "minimal" for compact summary. Default: standard.
     """
-    return semantic_search_nodes(
-        query=query, kind=kind, limit=limit, repo_root=_resolve_repo_root(repo_root),
-        model=model, provider=provider, detail_level=detail_level,
+    return await asyncio.to_thread(
+        semantic_search_nodes,
+        query=query,
+        kind=kind,
+        limit=limit,
+        repo_root=_resolve_repo_root(repo_root),
+        model=model,
+        provider=provider,
+        detail_level=detail_level,
     )
 
 
