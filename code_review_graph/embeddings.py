@@ -64,23 +64,29 @@ class EmbeddingProvider(ABC):
 
 LOCAL_DEFAULT_MODEL = "all-MiniLM-L6-v2"
 
+# Process-level model cache: keeps SentenceTransformer objects alive across
+# EmbeddingStore instances. Without this, every MCP tool call that creates a
+# new EmbeddingStore (and thus a new LocalEmbeddingProvider) would reload the
+# model from disk — taking 30–300 s for larger multilingual models and
+# exceeding typical MCP client timeouts. See: #46, #136
+_local_model_cache: dict[str, Any] = {}
+
 
 class LocalEmbeddingProvider(EmbeddingProvider):
     def __init__(self, model_name: str | None = None) -> None:
         self._model_name = model_name or os.environ.get(
             "CRG_EMBEDDING_MODEL", LOCAL_DEFAULT_MODEL
         )
-        self._model = None  # Lazy-loaded
 
     def _get_model(self):
-        if self._model is None:
+        if self._model_name not in _local_model_cache:
             try:
                 from sentence_transformers import SentenceTransformer
                 # Check environment variable, default to False to prevent RCE
                 _rce_val = os.environ.get("CRG_ALLOW_REMOTE_CODE", "0")
                 allow_remote_code = _rce_val.lower() in ("1", "true", "yes")
 
-                self._model = SentenceTransformer(
+                _local_model_cache[self._model_name] = SentenceTransformer(
                     self._model_name,
                     trust_remote_code=allow_remote_code,
                 )
@@ -89,7 +95,7 @@ class LocalEmbeddingProvider(EmbeddingProvider):
                     "sentence-transformers not installed. "
                     "Run: pip install code-review-graph[embeddings]"
                 )
-        return self._model
+        return _local_model_cache[self._model_name]
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         model = self._get_model()
