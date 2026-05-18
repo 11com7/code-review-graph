@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## [2.3.3+11com7.2] - 2026-05-18
+
+### Fixed
+
+- **Windows: `semantic_search_nodes_tool` no longer times out on large models** (11com7): the
+  `SentenceTransformer` model was reinstantiated on every MCP tool call because
+  `LocalEmbeddingProvider` is recreated with each `EmbeddingStore`. For larger multilingual
+  models (e.g. `paraphrase-multilingual-MiniLM-L12-v2`, ~470 MB) the per-call reload took
+  30–300 s and reliably exceeded MCP client timeouts. Fixed by introducing a process-level
+  module cache (`_local_model_cache`) keyed by model name — the model is loaded once at first
+  use and reused for the lifetime of the server process.
+
+### Added
+
+- **Automatic `.env` file loading** (11com7): `python-dotenv` is now a core dependency.
+  Both the CLI (`cli.py`) and the MCP server entry point (`main.py`) call `load_dotenv()` at
+  startup, so a local `.env` file in the working directory is picked up automatically. This
+  allows per-project configuration of environment variables (e.g. `CRG_EMBEDDING_MODEL`)
+  without modifying shell profiles. `.env` and `.env.local` are added to `.gitignore`.
+
 ## [2.3.3+11com7.1] - 2026-05-18
 
 Curated 11com7 fork release — upstream 2.3.3 plus Windows-specific fixes and portable install improvements.
