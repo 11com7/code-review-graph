@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [2.3.3+11com7.3] - 2026-05-18
+
+### Fixed
+
+- **Windows: `semantic_search_nodes_tool` deadlock on first call after server start** (11com7):
+  even with the process-level `_local_model_cache` in place, the very first call to
+  `semantic_search_nodes_tool` (or `embed_graph_tool`) after a fresh server start still
+  triggered a Windows DLL loader deadlock. Loading PyTorch / sentence-transformers native
+  extensions from a `ThreadPoolExecutor` thread while the main thread is blocked inside the
+  asyncio event loop (`WindowsSelectorEventLoopPolicy`) causes a circular wait on the OS
+  loader lock. Fixed by pre-warming the embedding model on the main thread in `main()`,
+  immediately after `asyncio.set_event_loop_policy()` and before `mcp.run()`. When
+  `CRG_EMBEDDING_MODEL` is set and the platform is Windows, `LocalEmbeddingProvider._get_model()`
+  is called once to populate `_local_model_cache`; subsequent `asyncio.to_thread` calls then
+  only do a dict lookup with no native DLL loading. No-op on Linux/macOS. See: #46, #136
+
 ## [2.3.3+11com7.2] - 2026-05-18
 
 ### Fixed
