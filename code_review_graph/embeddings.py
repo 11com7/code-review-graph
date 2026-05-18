@@ -16,6 +16,7 @@ import os
 import sqlite3
 import struct
 import sys
+import threading
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -70,6 +71,11 @@ LOCAL_DEFAULT_MODEL = "all-MiniLM-L6-v2"
 # model from disk — taking 30–300 s for larger multilingual models and
 # exceeding typical MCP client timeouts. See: #46, #136
 _local_model_cache: dict[str, Any] = {}
+# Serializes concurrent model loads so that a background pre-warm thread and
+# an asyncio.to_thread call racing to load the same model don't both trigger
+# DLL loading simultaneously. After the first load the cache check is a fast
+# path that never acquires the lock. See: #46, #136
+_local_model_lock = threading.Lock()
 
 
 class LocalEmbeddingProvider(EmbeddingProvider):
@@ -79,22 +85,28 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         )
 
     def _get_model(self):
-        if self._model_name not in _local_model_cache:
-            try:
-                from sentence_transformers import SentenceTransformer
-                # Check environment variable, default to False to prevent RCE
-                _rce_val = os.environ.get("CRG_ALLOW_REMOTE_CODE", "0")
-                allow_remote_code = _rce_val.lower() in ("1", "true", "yes")
+        if self._model_name in _local_model_cache:
+            return _local_model_cache[self._model_name]
+        with _local_model_lock:
+            # Double-check inside the lock: a concurrent thread (e.g. the
+            # background pre-warm thread) may have populated the cache while
+            # we were waiting to acquire it.
+            if self._model_name not in _local_model_cache:
+                try:
+                    from sentence_transformers import SentenceTransformer
+                    # Check environment variable, default to False to prevent RCE
+                    _rce_val = os.environ.get("CRG_ALLOW_REMOTE_CODE", "0")
+                    allow_remote_code = _rce_val.lower() in ("1", "true", "yes")
 
-                _local_model_cache[self._model_name] = SentenceTransformer(
-                    self._model_name,
-                    trust_remote_code=allow_remote_code,
-                )
-            except ImportError:
-                raise ImportError(
-                    "sentence-transformers not installed. "
-                    "Run: pip install code-review-graph[embeddings]"
-                )
+                    _local_model_cache[self._model_name] = SentenceTransformer(
+                        self._model_name,
+                        trust_remote_code=allow_remote_code,
+                    )
+                except ImportError:
+                    raise ImportError(
+                        "sentence-transformers not installed. "
+                        "Run: pip install code-review-graph[embeddings]"
+                    )
         return _local_model_cache[self._model_name]
 
     def embed(self, texts: list[str]) -> list[list[float]]:

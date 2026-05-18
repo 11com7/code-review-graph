@@ -1017,6 +1017,12 @@ def main(
     produces silent hangs on ``build_or_update_graph_tool`` and
     ``embed_graph_tool``. Switching to ``WindowsSelectorEventLoopPolicy``
     before fastmcp starts its loop avoids the deadlock.
+
+    When ``CRG_EMBEDDING_MODEL`` is set, the model is loaded in a daemon
+    thread that starts before ``mcp.run()`` so the server can respond to
+    the MCP handshake immediately. ``_get_model`` serializes concurrent
+    access via ``_local_model_lock`` so no DLL loading ever happens inside
+    ``asyncio.to_thread``.
     See: #46, #136
 
     Args:
@@ -1050,19 +1056,31 @@ def main(
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-    # Pre-warm local embedding model on the main thread before the event loop
-    # starts. On Windows, loading PyTorch (sentence-transformers) from a
-    # ThreadPoolExecutor thread deadlocks when the asyncio event loop is already
-    # running with WindowsSelectorEventLoopPolicy. Populating _local_model_cache
-    # here avoids any native DLL loading inside asyncio.to_thread. See: #46, #136
+    # Pre-warm the local embedding model in a daemon thread so the MCP server
+    # can respond to the client handshake immediately. Loading PyTorch /
+    # sentence-transformers takes 5–30 s and would block the stdio handshake
+    # long enough for MCP clients to time out before any tools are registered.
+    #
+    # Safety: _local_model_cache writes are serialized by _local_model_lock
+    # (see embeddings.py). If asyncio.to_thread calls _get_model() while the
+    # background thread is still loading it simply blocks on that lock — it
+    # never loads DLLs itself, which is the pattern that caused the original
+    # Windows deadlock. See: #46, #136
     _prewarm_model = os.environ.get("CRG_EMBEDDING_MODEL")
     if _prewarm_model and sys.platform == "win32":
-        try:
-            from .embeddings import LocalEmbeddingProvider
-            LocalEmbeddingProvider(model_name=_prewarm_model)._get_model()
-            logger.info("Pre-warmed embedding model: %s", _prewarm_model)
-        except Exception as e:
-            logger.warning("Could not pre-warm embedding model: %s", e)
+        import threading as _threading
+
+        def _do_prewarm(model_name: str) -> None:
+            try:
+                from .embeddings import LocalEmbeddingProvider
+                LocalEmbeddingProvider(model_name=model_name)._get_model()
+                logger.info("Pre-warmed embedding model: %s", model_name)
+            except Exception as exc:
+                logger.warning("Could not pre-warm embedding model: %s", exc)
+
+        _threading.Thread(
+            target=_do_prewarm, args=(_prewarm_model,), daemon=True, name="crg-prewarm"
+        ).start()
 
     try:
         if transport == "stdio":

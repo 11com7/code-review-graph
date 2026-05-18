@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows: MCP server startup blocked by embedding model pre-warm** (11com7): the
+  pre-warming introduced in 2.3.3+11com7.3 loaded the model synchronously on the main
+  thread before `mcp.run()`, blocking the MCP handshake for 5–30 s on cold starts. MCP
+  clients (e.g. Claude Code) timed out during initialization and registered no tools. Fixed
+  by moving model loading into a daemon thread (`crg-prewarm`) that starts before
+  `mcp.run()` but does not block it. `_get_model()` now uses a module-level
+  `_local_model_lock` with double-checked locking: if an `asyncio.to_thread` call races
+  against the background thread, it blocks on the lock (not DLL loading) and returns the
+  cached model once the background thread finishes. No DLL loading ever happens inside the
+  asyncio executor. See: #46, #136
+
 ## [2.3.3+11com7.3] - 2026-05-18
 
 ### Fixed
