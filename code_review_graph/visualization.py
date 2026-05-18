@@ -562,35 +562,6 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   }
   .filter-item { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; user-select: none; }
   .filter-item input { accent-color: #58a6ff; cursor: pointer; }
-  #community-legend {
-    position: absolute; bottom: 50px; right: 16px;
-    background: rgba(22,27,34,0.95);
-    border: 1px solid #30363d;
-    border-radius: 10px;
-    padding: 14px 18px; font-size: 12px;
-    backdrop-filter: blur(12px); z-index: 10;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-    max-height: 300px; overflow-y: auto;
-    display: none;
-  }
-  #community-legend.visible { display: block; }
-  #community-legend h3 {
-    font-size: 11px; font-weight: 700;
-    margin-bottom: 8px; color: #8b949e;
-    text-transform: uppercase; letter-spacing: 1px;
-  }
-  .cl-item {
-    display: flex; align-items: center;
-    gap: 8px; padding: 3px 0;
-    cursor: pointer; user-select: none;
-  }
-  .cl-item input {
-    accent-color: #58a6ff; cursor: pointer;
-  }
-  .cl-swatch {
-    width: 10px; height: 10px;
-    border-radius: 50%; flex-shrink: 0;
-  }
   :focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
   .filter-item input:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
   .dp-close:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
@@ -642,6 +613,35 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   .empty-icon { font-size: 48px; opacity: 0.4; }
   .empty-title { color: #e6edf3; font-size: 18px; font-weight: 600; }
   .empty-desc { color: #9eaab6; font-size: 13px; max-width: 320px; text-align: center; line-height: 1.6; }
+  #community-legend {
+    position: absolute; bottom: 50px; right: 16px;
+    background: rgba(22,27,34,0.95);
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 14px 18px; font-size: 12px;
+    backdrop-filter: blur(12px); z-index: 10;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    max-height: 300px; overflow-y: auto;
+    display: none;
+  }
+  #community-legend.visible { display: block; }
+  #community-legend h3 {
+    font-size: 11px; font-weight: 700;
+    margin-bottom: 8px; color: #8b949e;
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+  .cl-item {
+    display: flex; align-items: center;
+    gap: 8px; padding: 3px 0;
+    cursor: pointer; user-select: none;
+  }
+  .cl-item input {
+    accent-color: #58a6ff; cursor: pointer;
+  }
+  .cl-swatch {
+    width: 10px; height: 10px;
+    border-radius: 50%; flex-shrink: 0;
+  }
   marker { overflow: visible; }
   g.node-g:focus { outline: none; }
   g.node-g:focus-visible .node-shape { stroke: #58a6ff !important; stroke-width: 3 !important; }

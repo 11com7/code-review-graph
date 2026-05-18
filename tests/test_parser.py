@@ -775,6 +775,86 @@ class TestCodeParser:
             finally:
                 store.close()
 
+    # --- Bun test detection (regression: bun:test uses identical runner names) ---
+
+    def test_bun_test_detection(self):
+        """A .test.ts file importing from 'bun:test' should produce Test nodes."""
+        nodes, _ = self.parser.parse_file(FIXTURES / "sample_bun.test.ts")
+        tests = [n for n in nodes if n.kind == "Test"]
+        test_names = {t.name for t in tests}
+        assert any(n.startswith("describe") or n.startswith("describe:") for n in test_names), (
+            f"Expected describe Test node, got: {test_names}"
+        )
+        assert any(n.startswith("it:") or n.startswith("test:") for n in test_names), (
+            f"Expected it/test Test node, got: {test_names}"
+        )
+
+    def test_bun_tested_by_edges(self):
+        """TESTED_BY edges should be generated from bun tests to production code."""
+        _, edges = self.parser.parse_file(FIXTURES / "sample_bun.test.ts")
+        tested_by = [e for e in edges if e.kind == "TESTED_BY"]
+        assert len(tested_by) >= 1, (
+            f"Expected TESTED_BY edges, got none. "
+            f"All edges: {[(e.kind, e.source, e.target) for e in edges]}"
+        )
+
+    # --- __tests__/ directory recognition (Jest convention) ---
+    # Consistency fix: flows.py and refactor.py already recognize __tests__/
+    # but parser.py did not, so files there did not produce Test nodes.
+
+    def test_jest_tests_dir_detected_as_test_file(self):
+        """A file under __tests__/ should be classified as a test file even
+        when the filename itself has no .test./.spec. marker."""
+        from code_review_graph.parser import _is_test_file
+        assert _is_test_file("src/__tests__/UserService.ts")
+        assert _is_test_file("src\\__tests__\\UserService.ts")
+        # Negative: __tests__ as a substring without path separators must not match
+        assert not _is_test_file("my__tests__notdir.ts")
+
+    def test_jest_tests_dir_produces_test_nodes(self):
+        """A vitest-style file under __tests__/ should yield Test nodes
+        and TESTED_BY edges, the same as a *.test.ts file."""
+        fixture_path = FIXTURES / "__tests__" / "UserService.ts"
+        fixture_code = fixture_path.read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "src" / "__tests__" / "UserService.ts"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(fixture_code, encoding="utf-8")
+            nodes, edges = self.parser.parse_file(path)
+        tests = [n for n in nodes if n.kind == "Test"]
+        test_names = {t.name for t in tests}
+        assert any(n.startswith("describe") or n.startswith("describe:") for n in test_names), (
+            f"Expected describe Test node, got: {test_names}"
+        )
+        tested_by = [e for e in edges if e.kind == "TESTED_BY"]
+        assert len(tested_by) >= 1, (
+            f"Expected TESTED_BY edges from __tests__/ file, got none. "
+            f"Edges: {[(e.kind, e.source, e.target) for e in edges]}"
+        )
+
+    # --- Mocha TDD interface (suite/test) ---
+    # Mocha's TDD UI uses `suite()` instead of `describe()`. The `test()`
+    # function is already recognized; this verifies `suite()` is too.
+
+    def test_mocha_tdd_suite_produces_test_nodes(self):
+        """A *.test.ts file using `suite()` should produce Test nodes
+        and TESTED_BY edges, the same as a describe()-based file."""
+        nodes, edges = self.parser.parse_file(FIXTURES / "sample_mocha.test.ts")
+        tests = [n for n in nodes if n.kind == "Test"]
+        test_names = {t.name for t in tests}
+        assert any(n.startswith("suite") or n.startswith("suite:") for n in test_names), (
+            f"Expected suite Test node, got: {test_names}"
+        )
+        assert any(n.startswith("test:") for n in test_names), (
+            f"Expected test Test node, got: {test_names}"
+        )
+        tested_by = [e for e in edges if e.kind == "TESTED_BY"]
+        assert len(tested_by) >= 1, (
+            f"Expected TESTED_BY edges, got none. "
+            f"Edges: {[(e.kind, e.source, e.target) for e in edges]}"
+        )
+
+
     def test_non_test_file_describe_not_special(self):
         """describe() in a non-test file should NOT create Test nodes."""
         import tempfile
@@ -1337,6 +1417,48 @@ class TestModuleScopeCalls:
         ]
         assert len(top_level) == 1
 
+    def test_cpp_scoped_method_names(self, tmp_path):
+        """C++ scoped method definitions must extract the leaf method name,
+        not the return-type identifier.
+
+        Regression: previously ``Ret Class::method()`` indexed as ``Ret``
+        (return type) and ``void Class::method()`` was silently dropped
+        because _get_name() fell through to the generic identifier loop,
+        which did not recognise qualified_identifier, destructor_name, or
+        operator_name nodes inside function_declarator.
+        """
+        src = b"""
+void PlaybackExtension::resetStateForPool() {}
+quint64 PlaybackExtension::startTimestamp() const { return 0; }
+PlaybackExtension::~PlaybackExtension() {}
+~PlaybackExtension() {}
+bool operator==(const A& a, const B& b) { return true; }
+bool MyClass::operator<(const MyClass& o) const { return true; }
+void foo() {}
+int SnapshotController::getHandleIndex() { return 0; }
+bool PlaybackWidget::AllocateResourceStrategy::allocateExtensionResource(int i) { return true; }
+void A::B::C::deep() {}
+ExtensionID PlaybackExtension::ID() const { return {}; }
+"""
+        p = tmp_path / "x.cpp"
+        p.write_bytes(src)
+        nodes, _ = self.parser.parse_file(p)
+        names = [n.name for n in nodes if n.kind == "Function"]
+        assert names == [
+            "resetStateForPool",
+            "startTimestamp",
+            "~PlaybackExtension",
+            "~PlaybackExtension",
+            "operator==",
+            "operator<",
+            "foo",
+            "getHandleIndex",
+            "allocateExtensionResource",
+            "deep",
+            "ID",
+        ]
+
+
 class TestCppScopedFunctionName:
     """Regression tests for C++ scoped function name extraction.
 
@@ -1416,44 +1538,3 @@ class TestCppScopedFunctionName:
         fns = [n for n in nodes if n.kind == "Function"]
         assert len(fns) == 1
         assert fns[0].name == "get_obj_fingerprint"
-
-    def test_cpp_scoped_method_names(self, tmp_path):
-        """C++ scoped method definitions must extract the leaf method name,
-        not the return-type identifier.
-
-        Regression: previously ``Ret Class::method()`` indexed as ``Ret``
-        (return type) and ``void Class::method()`` was silently dropped
-        because _get_name() fell through to the generic identifier loop,
-        which did not recognise qualified_identifier, destructor_name, or
-        operator_name nodes inside function_declarator.
-        """
-        src = b"""
-void PlaybackExtension::resetStateForPool() {}
-quint64 PlaybackExtension::startTimestamp() const { return 0; }
-PlaybackExtension::~PlaybackExtension() {}
-~PlaybackExtension() {}
-bool operator==(const A& a, const B& b) { return true; }
-bool MyClass::operator<(const MyClass& o) const { return true; }
-void foo() {}
-int SnapshotController::getHandleIndex() { return 0; }
-bool PlaybackWidget::AllocateResourceStrategy::allocateExtensionResource(int i) { return true; }
-void A::B::C::deep() {}
-ExtensionID PlaybackExtension::ID() const { return {}; }
-"""
-        p = tmp_path / "x.cpp"
-        p.write_bytes(src)
-        nodes, _ = self.parser.parse_file(p)
-        names = [n.name for n in nodes if n.kind == "Function"]
-        assert names == [
-            "resetStateForPool",
-            "startTimestamp",
-            "~PlaybackExtension",
-            "~PlaybackExtension",
-            "operator==",
-            "operator<",
-            "foo",
-            "getHandleIndex",
-            "allocateExtensionResource",
-            "deep",
-            "ID",
-        ]

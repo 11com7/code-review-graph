@@ -24,22 +24,21 @@ from code_review_graph.skills import (
     _in_poetry_project,
     _in_uv_project,
     _opencode_plugin_content,
+    generate_codex_hooks_config,
     generate_cursor_hooks_config,
     generate_hooks_config,
     generate_skills,
     inject_claude_md,
     inject_platform_instructions,
+    install_codex_hooks,
+    install_gemini_cli_hooks,
+    install_gemini_cli_skills,
     install_cursor_hooks,
     install_git_hook,
     install_hooks,
     install_opencode_plugin,
     install_platform_configs,
 )
-
-try:
-    import tomllib
-except ModuleNotFoundError:
-    tomllib = None  # type: ignore[assignment]
 
 _needs_tomllib = pytest.mark.skipif(
     tomllib is None, reason="tomllib requires Python 3.11+",
@@ -52,19 +51,22 @@ class TestGenerateSkills:
         assert result.is_dir()
         assert result == tmp_path / ".claude" / "skills"
 
-    def test_creates_four_skill_files(self, tmp_path):
+    def test_creates_four_skill_subdirs(self, tmp_path):
         skills_dir = generate_skills(tmp_path)
-        files = sorted(f.name for f in skills_dir.iterdir())
-        assert files == [
-            "debug-issue.md",
-            "explore-codebase.md",
-            "refactor-safely.md",
-            "review-changes.md",
+        subdirs = sorted(f.name for f in skills_dir.iterdir() if f.is_dir())
+        assert subdirs == [
+            "debug-issue",
+            "explore-codebase",
+            "refactor-safely",
+            "review-changes",
         ]
+        for d in skills_dir.iterdir():
+            assert (d / "skill.md").is_file()
 
     def test_skill_files_have_frontmatter(self, tmp_path):
         skills_dir = generate_skills(tmp_path)
-        for path in skills_dir.iterdir():
+        for subdir in skills_dir.iterdir():
+            path = subdir / "skill.md"
             content = path.read_text()
             assert content.startswith("---\n")
             assert "name:" in content
@@ -85,18 +87,20 @@ class TestGenerateSkills:
     def test_skill_content_includes_get_minimal_context(self, tmp_path):
         """Every skill template must reference get_minimal_context."""
         skills_dir = generate_skills(tmp_path)
-        for path in skills_dir.iterdir():
-            content = path.read_text()
+        for subdir in skills_dir.iterdir():
+            content = (subdir / "skill.md").read_text()
             assert "get_minimal_context" in content, (
-                f"{path.name} missing get_minimal_context reference"
+                f"{subdir.name} missing get_minimal_context reference"
             )
 
     def test_skill_content_includes_detail_level(self, tmp_path):
         """Every skill template must reference detail_level."""
         skills_dir = generate_skills(tmp_path)
-        for path in skills_dir.iterdir():
-            content = path.read_text()
-            assert "detail_level" in content, f"{path.name} missing detail_level reference"
+        for subdir in skills_dir.iterdir():
+            content = (subdir / "skill.md").read_text()
+            assert "detail_level" in content, (
+                f"{subdir.name} missing detail_level reference"
+            )
 
     def test_idempotent(self, tmp_path):
         """Running twice should not fail and files should still be valid."""
@@ -265,6 +269,97 @@ class TestInstallHooks:
         install_hooks(tmp_path)
         assert (tmp_path / ".claude").is_dir()
 
+
+class TestGenerateCodexHooksConfig:
+    def test_returns_dict_with_hooks(self, tmp_path):
+        config = generate_codex_hooks_config(tmp_path)
+        assert "hooks" in config
+
+    def test_has_post_tool_use(self, tmp_path):
+        config = generate_codex_hooks_config(tmp_path)
+        assert "PostToolUse" in config["hooks"]
+        entry = config["hooks"]["PostToolUse"][0]
+        assert entry["matcher"] == "Write|Edit|Bash"
+        inner = entry["hooks"][0]
+        assert inner["type"] == "command"
+        assert "update" in inner["command"]
+        assert inner["statusMessage"] == "Updating code-review-graph"
+
+    def test_has_session_start(self, tmp_path):
+        config = generate_codex_hooks_config(tmp_path)
+        assert "SessionStart" in config["hooks"]
+        entry = config["hooks"]["SessionStart"][0]
+        assert entry["matcher"] == "startup|resume"
+        inner = entry["hooks"][0]
+        assert inner["type"] == "command"
+        assert "status" in inner["command"]
+        assert inner["statusMessage"] == "Checking code-review-graph status"
+
+    def test_commands_do_not_pin_a_specific_repo_path(self, tmp_path):
+        config = generate_codex_hooks_config(tmp_path / "repo with spaces")
+        post_cmd = config["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
+        session_cmd = config["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        assert "--repo" not in post_cmd
+        assert "--repo" not in session_cmd
+        assert "code-review-graph update --skip-flows" in post_cmd
+        assert "code-review-graph status" in session_cmd
+
+
+class TestInstallCodexHooks:
+    def test_creates_hooks_file(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        hooks_path = install_codex_hooks(tmp_path / "repo")
+        assert hooks_path == tmp_path / ".codex" / "hooks.json"
+        assert hooks_path.exists()
+        data = json.loads(hooks_path.read_text())
+        assert "hooks" in data
+        assert "PostToolUse" in data["hooks"]
+        assert "SessionStart" in data["hooks"]
+
+    def test_merges_with_existing(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir(parents=True)
+        existing = {
+            "customSetting": True,
+            "hooks": {
+                "Stop": [{"hooks": [{"type": "command", "command": "echo stop"}]}],
+            },
+        }
+        (codex_dir / "hooks.json").write_text(json.dumps(existing), encoding="utf-8")
+
+        install_codex_hooks(tmp_path / "repo")
+
+        data = json.loads((codex_dir / "hooks.json").read_text())
+        assert data["customSetting"] is True
+        assert "Stop" in data["hooks"]
+        assert "PostToolUse" in data["hooks"]
+        assert "SessionStart" in data["hooks"]
+
+    def test_creates_hooks_backup(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir(parents=True)
+        existing = {"hooks": {"Stop": []}}
+        hooks_path = codex_dir / "hooks.json"
+        hooks_path.write_text(json.dumps(existing), encoding="utf-8")
+
+        install_codex_hooks(tmp_path / "repo")
+
+        backup_path = codex_dir / "hooks.json.bak"
+        assert backup_path.exists()
+        backup = json.loads(backup_path.read_text())
+        assert backup == existing
+
+    def test_idempotent_by_command(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        repo_root = tmp_path / "repo"
+        install_codex_hooks(repo_root)
+        install_codex_hooks(repo_root)
+        data = json.loads((tmp_path / ".codex" / "hooks.json").read_text())
+        assert len(data["hooks"]["PostToolUse"]) == 1
+        assert len(data["hooks"]["SessionStart"]) == 1
+
     def test_install_qoder_hooks(self, tmp_path):
         install_hooks(tmp_path, platform="qoder")
         settings_path = tmp_path / ".qoder" / "settings.json"
@@ -386,11 +481,19 @@ class TestInjectClaudeMd:
 class TestInjectPlatformInstructionsFiltering:
     def test_all_writes_every_file(self, tmp_path):
         updated = inject_platform_instructions(tmp_path, target="all")
-        assert set(updated) == {"AGENTS.md", "GEMINI.md", ".cursorrules", ".windsurfrules", "QODER.md", ".kiro/steering/code-review-graph.md"}
+        assert set(updated) == {
+            "AGENTS.md", "GEMINI.md", ".cursorrules", ".windsurfrules",
+            "QODER.md", ".kiro/steering/code-review-graph.md",
+            ".github/code-review-graph.instruction.md",
+        }
 
     def test_default_is_all(self, tmp_path):
         updated = inject_platform_instructions(tmp_path)
-        assert set(updated) == {"AGENTS.md", "GEMINI.md", ".cursorrules", ".windsurfrules", "QODER.md", ".kiro/steering/code-review-graph.md"}
+        assert set(updated) == {
+            "AGENTS.md", "GEMINI.md", ".cursorrules", ".windsurfrules",
+            "QODER.md", ".kiro/steering/code-review-graph.md",
+            ".github/code-review-graph.instruction.md",
+        }
 
     def test_claude_writes_nothing(self, tmp_path):
         updated = inject_platform_instructions(tmp_path, target="claude")
@@ -400,6 +503,7 @@ class TestInjectPlatformInstructionsFiltering:
         assert not (tmp_path / ".cursorrules").exists()
         assert not (tmp_path / ".windsurfrules").exists()
         assert not (tmp_path / "QODER.md").exists()
+        assert not (tmp_path / ".github" / "code-review-graph.instruction.md").exists()
 
     def test_cursor_writes_only_cursor_files(self, tmp_path):
         updated = inject_platform_instructions(tmp_path, target="cursor")
@@ -415,6 +519,14 @@ class TestInjectPlatformInstructionsFiltering:
     def test_antigravity_writes_agents_and_gemini(self, tmp_path):
         updated = inject_platform_instructions(tmp_path, target="antigravity")
         assert set(updated) == {"AGENTS.md", "GEMINI.md"}
+
+    def test_gemini_cli_writes_only_gemini_md(self, tmp_path):
+        updated = inject_platform_instructions(tmp_path, target="gemini-cli")
+        assert updated == ["GEMINI.md"]
+        assert not (tmp_path / "AGENTS.md").exists()
+        assert not (tmp_path / ".cursorrules").exists()
+        assert not (tmp_path / ".windsurfrules").exists()
+        assert not (tmp_path / "QODER.md").exists()
 
     def test_opencode_writes_only_agents(self, tmp_path):
         updated = inject_platform_instructions(tmp_path, target="opencode")
@@ -599,6 +711,25 @@ class TestInstallPlatformConfigs:
         assert entry["env"] == []
         assert "cwd" not in entry, "project-level opencode config must not contain absolute cwd"
 
+    def test_install_gemini_cli_config(self, tmp_path):
+        gemini_config = tmp_path / ".gemini" / "settings.json"
+        with patch.dict(
+            PLATFORMS,
+            {
+                "gemini-cli": {
+                    **PLATFORMS["gemini-cli"],
+                    "config_path": lambda root: gemini_config,
+                    "detect": lambda: True,
+                },
+            },
+        ):
+            configured = install_platform_configs(tmp_path, target="gemini-cli")
+        assert "Gemini CLI" in configured
+        data = json.loads(gemini_config.read_text())
+        entry = data["mcpServers"]["code-review-graph"]
+        assert "type" not in entry
+        assert entry["args"][-1] == "serve"
+
     def test_install_qwen_config(self, tmp_path):
         """Qwen Code uses ~/.qwen/settings.json with mcpServers (see #83)."""
         qwen_config = tmp_path / ".qwen" / "settings.json"
@@ -661,6 +792,7 @@ class TestInstallPlatformConfigs:
                 "zed": {**PLATFORMS["zed"], "detect": lambda: False},
                 "continue": {**PLATFORMS["continue"], "detect": lambda: False},
                 "antigravity": {**PLATFORMS["antigravity"], "detect": lambda: False},
+                "gemini-cli": {**PLATFORMS["gemini-cli"], "detect": lambda: False},
             },
         ):
             configured = install_platform_configs(tmp_path, target="all")
@@ -735,6 +867,41 @@ class TestInstallPlatformConfigs:
         assert "cwd" not in data["mcpServers"]["code-review-graph"], (
             "project-level qoder config must not contain absolute cwd"
         )
+
+
+class TestGeminiCLIInstall:
+    def test_install_gemini_cli_hooks_creates_settings_and_scripts(self, tmp_path):
+        settings_dir = tmp_path / ".gemini"
+        settings_dir.mkdir(parents=True, exist_ok=True)
+        settings_path = settings_dir / "settings.json"
+        settings_path.write_text(json.dumps({"customSetting": True}) + "\n", encoding="utf-8")
+
+        out_path = install_gemini_cli_hooks(tmp_path)
+        assert out_path == settings_path
+        assert (settings_dir / "settings.json.bak").exists()
+
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+        assert data["customSetting"] is True
+        assert "hooks" in data
+        assert "SessionStart" in data["hooks"]
+        assert "AfterTool" in data["hooks"]
+
+        session_start = settings_dir / "hooks" / "crg-session-start.sh"
+        update = settings_dir / "hooks" / "crg-update.sh"
+        assert session_start.exists()
+        assert update.exists()
+        assert os.access(session_start, os.X_OK)
+        assert os.access(update, os.X_OK)
+
+    def test_install_gemini_cli_skills_writes_skill_dirs(self, tmp_path):
+        skills_root = install_gemini_cli_skills(tmp_path)
+        assert skills_root == tmp_path / ".gemini" / "skills"
+        skill_path = skills_root / "explore-codebase" / "SKILL.md"
+        assert skill_path.exists()
+        text = skill_path.read_text(encoding="utf-8")
+        assert text.startswith("---\n")
+        assert "name: explore-codebase" in text
+        assert "description:" in text
 
 
 class TestCursorHooksConfig:
@@ -1142,6 +1309,169 @@ class TestKiroPlatform:
         assert "Kiro" in configured
         config_path = tmp_path / ".kiro" / "settings" / "mcp.json"
         assert not config_path.exists()
+
+
+class TestCopilotPlatform:
+    """Tests for GitHub Copilot platform support."""
+
+    def test_copilot_platform_entry_exists(self):
+        """PLATFORMS dict has a 'copilot' key with correct metadata."""
+        assert "copilot" in PLATFORMS
+        copilot = PLATFORMS["copilot"]
+        assert copilot["name"] == "GitHub Copilot"
+        assert copilot["key"] == "servers"
+        assert copilot["format"] == "object"
+        assert copilot["needs_type"] is True
+
+    def test_install_copilot_config(self, tmp_path):
+        """install_platform_configs creates .vscode/mcp.json with 'servers' key."""
+        configured = install_platform_configs(tmp_path, target="copilot")
+        assert "GitHub Copilot" in configured
+        config_path = tmp_path / ".vscode" / "mcp.json"
+        assert config_path.exists()
+        data = json.loads(config_path.read_text())
+        assert "code-review-graph" in data["servers"]
+        entry = data["servers"]["code-review-graph"]
+        assert entry["type"] == "stdio"
+        assert "serve" in entry["args"]
+
+    def test_install_copilot_preserves_existing_servers(self, tmp_path):
+        """Existing server entries are preserved when adding code-review-graph."""
+        config_path = tmp_path / ".vscode" / "mcp.json"
+        config_path.parent.mkdir(parents=True)
+        config_path.write_text(
+            json.dumps({"servers": {"other-server": {"command": "other"}}}),
+            encoding="utf-8",
+        )
+        install_platform_configs(tmp_path, target="copilot")
+        data = json.loads(config_path.read_text())
+        assert "other-server" in data["servers"]
+        assert "code-review-graph" in data["servers"]
+
+    def test_install_copilot_no_duplicate(self, tmp_path):
+        """Second install skips when code-review-graph already exists."""
+        install_platform_configs(tmp_path, target="copilot")
+        config_path = tmp_path / ".vscode" / "mcp.json"
+        first_content = config_path.read_text()
+        install_platform_configs(tmp_path, target="copilot")
+        second_content = config_path.read_text()
+        assert first_content == second_content
+        data = json.loads(second_content)
+        assert list(data["servers"].keys()).count("code-review-graph") == 1
+
+    def test_copilot_instructions_file_written(self, tmp_path):
+        """inject_platform_instructions creates .github/code-review-graph.instruction.md."""
+        updated = inject_platform_instructions(tmp_path, target="copilot")
+        assert ".github/code-review-graph.instruction.md" in updated
+        instructions = tmp_path / ".github" / "code-review-graph.instruction.md"
+        assert instructions.exists()
+        content = instructions.read_text()
+        assert _CLAUDE_MD_SECTION_MARKER in content
+
+    def test_copilot_instructions_idempotent(self, tmp_path):
+        """Running inject twice produces identical content."""
+        inject_platform_instructions(tmp_path, target="copilot")
+        first = (tmp_path / ".github" / "code-review-graph.instruction.md").read_text()
+        inject_platform_instructions(tmp_path, target="copilot")
+        second = (tmp_path / ".github" / "code-review-graph.instruction.md").read_text()
+        assert first == second
+
+    def test_copilot_dry_run(self, tmp_path):
+        """dry_run=True does not create any files."""
+        configured = install_platform_configs(tmp_path, target="copilot", dry_run=True)
+        assert "GitHub Copilot" in configured
+        config_path = tmp_path / ".vscode" / "mcp.json"
+        assert not config_path.exists()
+
+    def test_copilot_writes_only_copilot_instructions(self, tmp_path):
+        """inject_platform_instructions with target='copilot' writes only copilot file."""
+        updated = inject_platform_instructions(tmp_path, target="copilot")
+        assert updated == [".github/code-review-graph.instruction.md"]
+        assert not (tmp_path / "AGENTS.md").exists()
+        assert not (tmp_path / "GEMINI.md").exists()
+        assert not (tmp_path / ".cursorrules").exists()
+        assert not (tmp_path / ".windsurfrules").exists()
+        assert not (tmp_path / "QODER.md").exists()
+
+    def test_copilot_included_in_all_when_detected(self, tmp_path):
+        """install_platform_configs with target='all' includes Copilot when ~/.vscode exists."""
+        fake_home = tmp_path / "fakehome"
+        (fake_home / ".vscode").mkdir(parents=True)
+        with patch("code_review_graph.skills.Path.home", return_value=fake_home):
+            configured = install_platform_configs(tmp_path, target="all")
+        assert "GitHub Copilot" in configured
+        config_path = tmp_path / ".vscode" / "mcp.json"
+        assert config_path.exists()
+
+
+class TestCopilotCLIPlatform:
+    """Tests for GitHub Copilot CLI platform support."""
+
+    def test_copilot_cli_platform_entry_exists(self):
+        """PLATFORMS dict has a 'copilot-cli' key with correct metadata."""
+        assert "copilot-cli" in PLATFORMS
+        copilot_cli = PLATFORMS["copilot-cli"]
+        assert copilot_cli["name"] == "GitHub Copilot CLI"
+        assert copilot_cli["key"] == "servers"
+        assert copilot_cli["format"] == "object"
+        assert copilot_cli["needs_type"] is True
+
+    def test_install_copilot_cli_config(self, tmp_path):
+        """install_platform_configs creates ~/.copilot/mcp-config.json with 'servers' key."""
+        fake_home = tmp_path / "fakehome"
+        (fake_home / ".copilot").mkdir(parents=True)
+        config_path = fake_home / ".copilot" / "mcp-config.json"
+        with patch.dict(
+            PLATFORMS,
+            {
+                "copilot-cli": {
+                    **PLATFORMS["copilot-cli"],
+                    "config_path": lambda root: config_path,
+                    "detect": lambda: True,
+                },
+            },
+        ):
+            configured = install_platform_configs(tmp_path, target="copilot-cli")
+        assert "GitHub Copilot CLI" in configured
+        assert config_path.exists()
+        data = json.loads(config_path.read_text())
+        assert "code-review-graph" in data["servers"]
+        entry = data["servers"]["code-review-graph"]
+        assert entry["type"] == "stdio"
+        assert "serve" in entry["args"]
+
+    def test_install_copilot_cli_preserves_existing_servers(self, tmp_path):
+        """Existing server entries are preserved when adding code-review-graph."""
+        fake_home = tmp_path / "fakehome"
+        config_path = fake_home / ".copilot" / "mcp-config.json"
+        config_path.parent.mkdir(parents=True)
+        config_path.write_text(
+            json.dumps({"servers": {"other-server": {"command": "other"}}}),
+            encoding="utf-8",
+        )
+        with patch.dict(
+            PLATFORMS,
+            {
+                "copilot-cli": {
+                    **PLATFORMS["copilot-cli"],
+                    "config_path": lambda root: config_path,
+                    "detect": lambda: True,
+                },
+            },
+        ):
+            install_platform_configs(tmp_path, target="copilot-cli")
+        data = json.loads(config_path.read_text())
+        assert "other-server" in data["servers"]
+        assert "code-review-graph" in data["servers"]
+
+    def test_copilot_cli_writes_only_copilot_instructions(self, tmp_path):
+        """inject_platform_instructions with target='copilot-cli' writes .github/code-review-graph.instruction.md."""
+        updated = inject_platform_instructions(tmp_path, target="copilot-cli")
+        assert ".github/code-review-graph.instruction.md" in updated
+        instructions = tmp_path / ".github" / "code-review-graph.instruction.md"
+        assert instructions.exists()
+        content = instructions.read_text()
+        assert _CLAUDE_MD_SECTION_MARKER in content
 
 
 class TestDetectServeCommand:

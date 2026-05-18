@@ -1,3 +1,3 @@
 """Code Review Graph - MCP server for persistent incremental code knowledge graphs."""
 
-__version__ = "2.3.2+11com7.5"
+__version__ = "2.3.3+11com7.1"
