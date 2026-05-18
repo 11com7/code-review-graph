@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [2.3.3+11com7.5] - 2026-05-18
+
+### Fixed
+
+- **Windows: `semantic_search_nodes_tool` still freezes MCP server on default config** (11com7): the pre-warm daemon thread introduced in 2.3.3+11com7.4 was gated behind `if _prewarm_model and sys.platform == "win32"`, meaning it only fired when `CRG_EMBEDDING_MODEL` was explicitly set. Users relying on the default model (`all-MiniLM-L6-v2`) received no pre-warm and still hit the DLL Loader Lock deadlock on the first `semantic_search_nodes_tool` call. Fixed in two places:
+
+  1. `main.py`: the pre-warm now runs on Windows whenever `sentence-transformers` is importable, regardless of whether `CRG_EMBEDDING_MODEL` is set. When the env var is absent, `LOCAL_DEFAULT_MODEL` (`all-MiniLM-L6-v2`) is used as the fallback.
+
+  2. `search.py`: `_embedding_search()` now checks `_local_model_cache` before touching the embedding provider on Windows. If the model is not yet cached (pre-warm still in progress), the function returns `[]` immediately and the caller falls back to FTS5. This closes the remaining race window: even if the first MCP tool call arrives before the daemon thread finishes, the event loop does not deadlock — it simply returns FTS5-only results for that one call, and full embedding search resumes once the cache is populated. See: #46, #136
+
 ## [2.3.3+11com7.4] - 2026-05-18
 
 ### Fixed
