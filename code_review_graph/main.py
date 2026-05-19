@@ -1075,11 +1075,12 @@ def main(
         # worker while DLLs are being loaded concurrently, both sides wait forever.
         # Pre-warming before asyncio starts avoids the race entirely. See: #46, #136
         _prewarm_model = os.environ.get("CRG_EMBEDDING_MODEL")
-        try:
-            import sentence_transformers as _st_check  # noqa: F401
-            _st_available = True
-        except ImportError:
-            _st_available = False
+        # Use find_spec instead of a bare import so we don't pull in PyTorch on
+        # the main thread just to check availability. A real import takes 10–30 s
+        # on Windows (DLL loading) and would delay the MCP handshake long enough
+        # for clients to time out before the server registers any tools.
+        import importlib.util as _importlib_util
+        _st_available = _importlib_util.find_spec("sentence_transformers") is not None
         if _st_available:
             import threading as _threading
 
