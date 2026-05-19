@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows: MCP server marked as failed on cold start** (11com7): `main()` called `import sentence_transformers` on the main thread just to check whether the package is installed. On Windows this pulls in PyTorch and all its DLLs synchronously — typically 10–30 s — which blocks the stdio handshake long enough for MCP clients (e.g. Claude Code) to time out and mark the server as failed before any tools are registered. Fixed by replacing the bare import with `importlib.util.find_spec('sentence_transformers')`, a pure file-system lookup that takes < 1 ms and has no import side effects. The daemon thread that actually loads the model is unchanged. See: #46, #136
+
+- **Windows: semantic search permanently falls back to FTS5 after `embed_graph_tool` on an already-embedded graph** (11com7): when all graph nodes already had up-to-date embeddings, `EmbeddingStore.embed_nodes()` returned 0 without calling `_get_model()`, leaving `_local_model_cache` empty. The Windows guard in `_embedding_search()` checks that cache before allowing vector search — so every subsequent `semantic_search_nodes` call silently fell back to keyword-only FTS5, even though `embed_graph_tool` had just reported "Semantic search is now active". Fixed by calling `self.provider.embed([])` in the early-return branch: for the local provider this triggers `_get_model()` and populates the cache; for cloud providers the empty-list loop is a no-op with no network calls. Adds a regression test that pre-populates the embeddings table and asserts `embed([])` is still called. See: #46
+
 ## [2.3.3+11com7.5] - 2026-05-18
 
 ### Fixed
