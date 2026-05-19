@@ -805,6 +805,14 @@ class EmbeddingStore:
             to_embed.append((node, text, text_hash))
 
         if not to_embed:
+            # Warm the model even when there is nothing new to embed.
+            # On Windows, _embedding_search() gates vector search on
+            # _local_model_cache being populated (see search.py). Without this
+            # call, embed_graph_tool on an already-embedded graph leaves the
+            # cache empty and semantic search permanently falls back to FTS5.
+            # embed([]) calls _get_model() for the local provider (no-op for
+            # cloud providers whose embed() loops over an empty list). See: #46
+            self.provider.embed([])
             return 0
 
         # Encode in batches

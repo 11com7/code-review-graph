@@ -129,6 +129,47 @@ class TestEmbeddingStore:
             assert result == 0
             store.close()
 
+    def test_embed_nodes_warms_model_when_all_already_embedded(self, tmp_path):
+        """Regression: embed_nodes must call provider.embed([]) even when 0 nodes need
+        updating, so the local model lands in _local_model_cache and the Windows guard
+        in _embedding_search() does not permanently block semantic search. See: #46."""
+        import hashlib
+
+        db = tmp_path / "graph.db"
+
+        mock_provider = MagicMock()
+        mock_provider.name = "local:all-MiniLM-L6-v2"
+        mock_provider.embed.return_value = [[0.1, 0.2, 0.3]]
+
+        node = GraphNode(
+            id=1, name="my_func", qualified_name="module::my_func",
+            kind="Function", file_path="module.py",
+            line_start=1, line_end=10, language="python",
+            parent_name=None, params=None, return_type=None,
+            is_test=False, file_hash=None, extra={},
+        )
+
+        from code_review_graph.embeddings import _node_to_text, _encode_vector
+
+        text = _node_to_text(node)
+        text_hash = hashlib.sha256(text.encode()).hexdigest()
+
+        with patch("code_review_graph.embeddings.get_provider", return_value=mock_provider):
+            store = EmbeddingStore(db)
+            # Pre-populate the DB so the node is considered up-to-date
+            store._conn.execute(
+                "INSERT INTO embeddings (qualified_name, vector, text_hash, provider)"
+                " VALUES (?, ?, ?, ?)",
+                (node.qualified_name, _encode_vector([0.1, 0.2, 0.3]),
+                 text_hash, mock_provider.name),
+            )
+            result = store.embed_nodes([node])
+            store.close()
+
+        assert result == 0
+        # provider.embed must have been called once with an empty list to warm the model
+        mock_provider.embed.assert_called_once_with([])
+
     def test_search_returns_empty_when_unavailable(self, tmp_path):
         db = tmp_path / "embeddings.db"
         with patch("code_review_graph.embeddings.get_provider", return_value=None):
