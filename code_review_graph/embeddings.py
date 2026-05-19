@@ -76,6 +76,14 @@ _local_model_cache: dict[str, Any] = {}
 # DLL loading simultaneously. After the first load the cache check is a fast
 # path that never acquires the lock. See: #46, #136
 _local_model_lock = threading.Lock()
+# Signals that the background pre-warm thread has finished loading the model
+# (or that no pre-warm is running). embed_graph_tool polls this on Windows
+# before submitting work to asyncio.to_thread, so thread-pool worker creation
+# never races with DLL loading. Initially set (= "done") because no pre-warm
+# is running at import time. main.py clears it before starting crg-prewarm
+# and sets it again in the finally block. See: #46, #136
+_prewarm_done: threading.Event = threading.Event()
+_prewarm_done.set()
 
 
 class LocalEmbeddingProvider(EmbeddingProvider):

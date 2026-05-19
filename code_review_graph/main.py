@@ -364,6 +364,23 @@ async def embed_graph_tool(
                   CRG_OPENAI_MODEL env vars and accepts any OpenAI-compatible
                   endpoint (real OpenAI, Azure, new-api, LiteLLM, vLLM, etc.).
     """
+    # On Windows, wait for the background pre-warm thread to finish loading
+    # PyTorch / sentence-transformers DLLs before handing off to
+    # asyncio.to_thread. Creating a new thread-pool worker while DLLs are
+    # being loaded concurrently triggers Windows DLL_THREAD_ATTACH callbacks,
+    # which stall on the OS DLL Loader Lock held by the pre-warm thread. This
+    # can delay worker creation by 10–60 s and exhaust MCP client timeouts
+    # (appearing as a "hang"). Polling on threading.Event with asyncio.sleep
+    # yields control to the event loop, keeping the server responsive for
+    # other tool calls during the wait. See: #46, #136
+    if sys.platform == "win32":
+        from .embeddings import _prewarm_done as _prewarm_done_event
+        _deadline = asyncio.get_event_loop().time() + 120
+        while not _prewarm_done_event.is_set():
+            if asyncio.get_event_loop().time() > _deadline:
+                logger.warning("embed_graph_tool: pre-warm did not complete within 120 s")
+                break
+            await asyncio.sleep(0.5)
     return await asyncio.to_thread(
         embed_graph,
         repo_root=_resolve_repo_root(repo_root),
@@ -1085,6 +1102,9 @@ def main(
             import threading as _threading
 
             from .embeddings import LOCAL_DEFAULT_MODEL as _DEFAULT_MODEL
+            from .embeddings import _prewarm_done as _prewarm_done_event
+
+            _prewarm_done_event.clear()
 
             def _do_prewarm(model_name: str) -> None:
                 try:
@@ -1093,6 +1113,8 @@ def main(
                     logger.info("Pre-warmed embedding model: %s", model_name)
                 except Exception as exc:
                     logger.warning("Could not pre-warm embedding model: %s", exc)
+                finally:
+                    _prewarm_done_event.set()
 
             _threading.Thread(
                 target=_do_prewarm,
