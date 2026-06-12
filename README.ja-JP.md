@@ -1,5 +1,7 @@
 <h1 align="center">code-review-graph</h1>
 
+> **注意:** この翻訳は古いリリースに基づいています。ベンチマーク数値や対応プラットフォームの一覧は[英語版 README](README.md)より古い場合があります。
+
 <p align="center">
   <strong>トークンの無駄遣いをやめて、スマートなレビューを。</strong>
 </p>
@@ -26,7 +28,7 @@
 
 <br>
 
-AIコーディングツールはタスクのたびにコードベース全体を再読み込みします。`code-review-graph` はその問題を解決します。[Tree-sitter](https://tree-sitter.github.io/tree-sitter/) でコードの構造マップを構築し、変更を差分で追跡し、[MCP](https://modelcontextprotocol.io/) を通じてAIアシスタントに必要最小限のコンテキストだけを提供します。
+AIコーディングツールはレビュータスクでコードベースの大きな範囲を読み直しがちです。`code-review-graph` はその問題を解決します。[Tree-sitter](https://tree-sitter.github.io/tree-sitter/) でコードの構造マップを構築し、変更を差分で追跡し、[MCP](https://modelcontextprotocol.io/) を通じてAIアシスタントに必要最小限のコンテキストだけを提供します。
 
 <p align="center">
   <img src="diagrams/diagram1_before_vs_after.png" alt="トークン問題：6つの実リポジトリで平均8.2倍のトークン削減" width="85%" />
@@ -45,7 +47,7 @@ code-review-graph build            # コードベースを解析
 1つのコマンドですべてが完了します。`install` は使用中のAIコーディングツールを検出し、各ツールに適切なMCP設定を書き込み、プラットフォームルールにグラフ対応の指示を注入します。`uvx` と `pip`/`pipx` のどちらでインストールしたかを自動判別し、適切な設定を生成します。インストール後はエディタ/ツールを再起動してください。
 
 <p align="center">
-  <img src="diagrams/diagram8_supported_platforms.png" alt="ワンインストールで全プラットフォーム対応：Codex、Claude Code、Cursor、Windsurf、Zed、Continue、OpenCode、Antigravity、Kiroを自動検出" width="85%" />
+  <img src="diagrams/diagram8_supported_platforms.png" alt="ワンインストールで対応するAIコーディングツールを自動検出して設定" width="85%" />
 </p>
 
 特定のプラットフォームのみを設定する場合：
@@ -65,7 +67,7 @@ Python 3.10以上が必要です。最良の体験のためには [uv](https://d
 Build the code review graph for this project
 ```
 
-初回ビルドは500ファイルのプロジェクトで約10秒です。以降はファイル編集やgitコミットのたびにグラフが自動更新されます。
+初回ビルドは500ファイルのプロジェクトで約10秒です。以降はwatchモードや対応しているプラットフォームフックでグラフを自動更新できます。
 
 ---
 
@@ -91,7 +93,7 @@ Build the code review graph for this project
 
 ### 2秒以内のインクリメンタル更新
 
-gitコミットやファイル保存のたびにフックが起動します。グラフは変更ファイルの差分を取り、SHA-256ハッシュで依存先を特定し、変更されたものだけを再解析します。2,900ファイルのプロジェクトでも2秒以内で再インデックスが完了します。
+フックまたはwatchモードを有効にすると、ファイル保存や対応しているコミットフックでインクリメンタル更新が起動します。グラフは変更ファイルの差分を取り、SHA-256ハッシュで依存先を特定し、変更されたものだけを再解析します。2,900ファイルのプロジェクトでも2秒以内で再インデックスが完了します。
 
 <p align="center">
   <img src="diagrams/diagram4_incremental_update.png" alt="インクリメンタル更新フロー：gitコミットが差分をトリガー、依存先を検出、5ファイルのみ再解析、2,910ファイルはスキップ" width="90%" />
@@ -105,23 +107,23 @@ gitコミットやファイル保存のたびにフックが起動します。�
   <img src="diagrams/diagram6_monorepo_funnel.png" alt="Next.jsモノレポ：27,732ファイルをcode-review-graphで絞り込み、約15ファイルに - トークン49分の1" width="80%" />
 </p>
 
-### 23言語 + Jupyterノートブック対応
+### 幅広い言語対応 + Jupyterノートブック
 
 <p align="center">
-  <img src="diagrams/diagram9_language_coverage.png" alt="カテゴリ別19言語：Web、バックエンド、システム、モバイル、スクリプト、さらにJupyter/Databricksノートブック対応" width="90%" />
+  <img src="diagrams/diagram9_language_coverage.png" alt="カテゴリ別の言語サポート：Web、バックエンド、システム、モバイル、スクリプト、さらにJupyter/Databricksノートブック対応" width="90%" />
 </p>
 
-すべての言語で関数、クラス、インポート、呼び出し箇所、継承、テスト検出の完全なTree-sitter文法をサポート。Zig、PowerShell、Julia、Svelte SFCにも対応。さらにJupyter/Databricksノートブック（`.ipynb`）の多言語セル対応（Python、R、SQL）やPerl XSファイル（`.xs`）も解析可能です。
+現在のパーサーが対応する範囲で、関数、クラス、インポート、呼び出し箇所、継承、テスト検出を抽出します。利用できる場合はTree-sitterを使い、必要な箇所では専用のフォールバック解析を使います。対応範囲には Python、JavaScript/TypeScript/TSX、Go、Rust、Java、C/C++、C#、Ruby、Kotlin、Swift、PHP、Scala、Solidity、Dart、R、Perl、Lua/Luau、Objective-C、shell scripts、Elixir、Zig、PowerShell、Julia、ReScript、GDScript、Nix、Verilog/SystemVerilog、SQL、Vue/Svelte SFC、TypeScriptパーサーで扱うAstroファイル、Jupyter/Databricksノートブック（`.ipynb`）、Perl XSファイル（`.xs`）が含まれます。
 
 ---
 
 ## ベンチマーク
 
 <p align="center">
-  <img src="diagrams/diagram5_benchmark_board.png" alt="実リポジトリでのベンチマーク：トークン4.9倍から27.3倍削減、レビュー品質向上" width="85%" />
+  <img src="diagrams/diagram5_benchmark_board.png" alt="実リポジトリでのベンチマーク：トークン4.9倍から27.3倍削減、保守的な影響分析" width="85%" />
 </p>
 
-すべての数値は6つの実際のオープンソースリポジトリ（合計13コミット）に対する自動評価ランナーの結果です。`code-review-graph eval --all` で再現可能です。生データは [`evaluate/reports/summary.md`](evaluate/reports/summary.md) をご覧ください。
+すべての数値は6つの実際のオープンソースリポジトリ（合計13コミット）に対する自動評価ランナーの結果です。`code-review-graph eval --all` で再現可能です。完全な再現手順と正規の数値は [`docs/REPRODUCING.md`](docs/REPRODUCING.md) をご覧ください。
 
 > 詳細なベンチマーク結果（トークン効率、影響精度、ビルド性能、既知の制限事項）については [英語版README](README.md) を参照してください。
 
@@ -132,8 +134,8 @@ gitコミットやファイル保存のたびにフックが起動します。�
 | 機能 | 詳細 |
 |------|------|
 | **インクリメンタル更新** | 変更されたファイルのみを再解析。更新は2秒以内に完了。 |
-| **23言語 + ノートブック** | Python, TypeScript/TSX, JavaScript, Vue, Svelte, Go, Rust, Java, Scala, C#, Ruby, Kotlin, Swift, PHP, Solidity, C/C++, Dart, R, Perl, Lua, Zig, PowerShell, Julia, Jupyter/Databricks (.ipynb) |
-| **影響範囲分析** | 変更によって影響を受ける関数、クラス、ファイルを正確に表示 |
+| **幅広い言語対応 + ノートブック** | Python, JavaScript/TypeScript/TSX, Go, Rust, Java, C/C++, C#, Ruby, Kotlin, Swift, PHP, Scala, Solidity, Dart, R, Perl, Lua/Luau, Objective-C, shell, Elixir, Zig, PowerShell, Julia, ReScript, GDScript, Nix, Verilog/SystemVerilog, SQL, Vue/Svelte SFCs, Astro files parsed as TypeScript, Jupyter/Databricks (.ipynb) |
+| **影響範囲分析** | 変更によって影響を受ける可能性のある関数、クラス、ファイルを表示 |
 | **自動更新フック** | ファイル編集やgitコミットのたびに手動操作なしでグラフを更新 |
 | **セマンティック検索** | sentence-transformers、Google Gemini、MiniMax、またはOpenAI互換エンドポイント（本家OpenAI、Azure、new-api、LiteLLM、vLLM、LocalAI）によるオプションのベクトル埋め込み |
 | **インタラクティブ可視化** | D3.js力学レイアウトグラフ。検索、コミュニティ凡例切替、次数スケーリングノード対応 |
@@ -158,7 +160,7 @@ gitコミットやファイル保存のたびにフックが起動します。�
 | **マルチリポジトリ管理** | 複数リポジトリを登録し、横断検索が可能 |
 | **MCPプロンプト** | 5つのワークフローテンプレート：レビュー、アーキテクチャ、デバッグ、オンボーディング、マージ前チェック |
 | **全文検索** | FTS5によるハイブリッド検索（キーワードとベクトル類似度の組み合わせ） |
-| **ローカルストレージ** | `.code-review-graph/` 内のSQLiteファイル。外部DB不要、クラウド依存なし。 |
+| **ローカルストレージ** | `.code-review-graph/` 内のSQLiteファイル。コアのグラフ保存に外部DBやクラウドサービスは不要。 |
 | **ウォッチモード** | 作業中にグラフを継続的に更新 |
 
 ---
@@ -205,7 +207,7 @@ code-review-graph serve            # MCPサーバーの起動
 </details>
 
 <details>
-<summary><strong>28のMCPツール</strong></summary>
+<summary><strong>30のMCPツール</strong></summary>
 <br>
 
 グラフのビルド後、AIアシスタントがこれらのツールを自動的に使用します。
@@ -213,6 +215,7 @@ code-review-graph serve            # MCPサーバーの起動
 | ツール | 説明 |
 |--------|------|
 | `build_or_update_graph_tool` | グラフのビルドまたはインクリメンタル更新 |
+| `run_postprocess_tool` | 実行フロー、コミュニティ、全文検索インデックスの後処理を再実行 |
 | `get_minimal_context_tool` | 超コンパクトなコンテキスト（約100トークン） -- 最初にこれを呼び出す |
 | `get_impact_radius_tool` | 変更ファイルの影響範囲 |
 | `get_review_context_tool` | 構造サマリー付きトークン最適化レビューコンテキスト |
@@ -268,6 +271,7 @@ node_modules/**
 pip install code-review-graph[embeddings]          # ローカルベクトル埋め込み (sentence-transformers)
 pip install code-review-graph[google-embeddings]   # Google Gemini埋め込み
 pip install code-review-graph[communities]         # コミュニティ検出 (igraph)
+pip install code-review-graph[enrichment]          # Python呼び出し解決の補強 (Jedi)
 pip install code-review-graph[eval]                # 評価ベンチマーク (matplotlib)
 pip install code-review-graph[wiki]                # LLMサマリー付きWiki生成 (ollama)
 pip install code-review-graph[all]                 # 全オプション依存
@@ -321,5 +325,5 @@ MIT。詳細は [LICENSE](LICENSE) を参照してください。
 <br>
 <a href="https://code-review-graph.com">code-review-graph.com</a><br><br>
 <code>pip install code-review-graph && code-review-graph install</code><br>
-<sub>Codex、Claude Code、Cursor、Windsurf、Zed、Continue、OpenCode、Antigravity、Kiroに対応</sub>
+<sub>Codex、Claude Code、Cursor、Windsurf、Zed、Continue、OpenCode、Antigravity、Gemini CLI、Qwen、Kiro、Qoder、GitHub Copilotなど、対応するAIコーディングツールを自動検出して設定</sub>
 </p>

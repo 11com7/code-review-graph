@@ -570,6 +570,7 @@ def get_community_tool(
 @mcp.tool()
 def get_architecture_overview_tool(
     repo_root: Optional[str] = None,
+    detail_level: str = "minimal",
 ) -> dict:
     """Generate an architecture overview based on community structure.
 
@@ -579,8 +580,15 @@ def get_architecture_overview_tool(
 
     Args:
         repo_root: Repository root path. Auto-detected if omitted.
+        detail_level: "minimal" (default) drops community member lists
+                      and aggregates cross-community edges to one row per
+                      community pair (typical reduction: 600KB -> <5KB);
+                      "standard" returns full per-edge detail.
     """
-    return get_architecture_overview_func(repo_root=_resolve_repo_root(repo_root))
+    return get_architecture_overview_func(
+        repo_root=_resolve_repo_root(repo_root),
+        detail_level=detail_level,
+    )
 
 
 @mcp.tool()
@@ -611,12 +619,28 @@ async def detect_changes_tool(
         detail_level: "standard" for full output, "minimal" for
             token-efficient summary. Default: standard.
     """
-    return await asyncio.to_thread(
+    coro = asyncio.to_thread(
         detect_changes_func,
         base=base, changed_files=changed_files,
         include_source=include_source, max_depth=max_depth,
         repo_root=_resolve_repo_root(repo_root), detail_level=detail_level,
     )
+    tool_timeout = int(os.environ.get("CRG_TOOL_TIMEOUT", "0"))
+    if tool_timeout > 0:
+        try:
+            return await asyncio.wait_for(coro, timeout=tool_timeout)
+        except asyncio.TimeoutError:
+            message = (
+                f"detect_changes_tool timed out after {tool_timeout}s. "
+                "Reduce scope with CRG_MAX_CHANGED_FUNCS / CRG_MAX_TRANSITIVE_FRONTIER, "
+                "or increase CRG_TOOL_TIMEOUT."
+            )
+            return {
+                "status": "error",
+                "error": message,
+                "summary": message,
+            }
+    return await coro
 
 
 @mcp.tool()
@@ -1055,19 +1079,14 @@ def main(
 
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-        # On Windows the local embedding model runs in a dedicated worker
-        # process (see embeddings.embed_worker): importing torch/numpy from
-        # any non-main thread of this process deadlocks on the OS DLL Loader
-        # Lock, while spawning a process is loader-lock-free and instant.
-        # Use find_spec — a pure filesystem lookup, < 1 ms, no import side
-        # effects — to decide whether a local model can exist at all.
-        # See: #46, #136
-        import importlib.util as _ilu
-
-        if _ilu.find_spec("sentence_transformers") is not None:
-            from .embeddings import start_embed_worker
-            start_embed_worker()
+        # Prepare local embeddings before fastmcp's event loop starts:
+        # importing torch/numpy from any non-main thread deadlocks on the
+        # Windows DLL Loader Lock. On Windows this spawns the dedicated
+        # embed worker process (loader-lock-free, returns immediately);
+        # see embeddings.prewarm_local_embeddings and embed_worker.
+        # See: #46, #136, #385
+        from .embeddings import prewarm_local_embeddings
+        prewarm_local_embeddings()
 
     try:
         if transport == "stdio":

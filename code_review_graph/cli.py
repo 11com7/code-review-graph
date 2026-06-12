@@ -20,7 +20,7 @@ Usage:
     code-review-graph daemon stop
     code-review-graph daemon restart [--foreground]
     code-review-graph daemon status
-    code-review-graph daemon logs [--repo ALIAS] [-f] [-n N]
+    code-review-graph daemon logs [--repo ALIAS] [--follow] [--lines N]
     code-review-graph daemon add <path> [--alias NAME]
     code-review-graph daemon remove <path_or_alias>
 """
@@ -44,10 +44,6 @@ import os
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from .graph import GraphStore
 
 logger = logging.getLogger(__name__)
 
@@ -60,12 +56,28 @@ _PLATFORM_CHOICES = [
 
 
 def _get_version() -> str:
-    """Get the installed package version."""
+    """Get the installed package version.
+
+    Tries ``importlib.metadata`` first (canonical source from the installed
+    dist-info), falling back to the package's ``__version__`` attribute if
+    metadata is unavailable or corrupt. This matters for editable installs
+    on filesystems where iCloud / OneDrive can leave orphan dist-info dirs
+    behind that confuse importlib.metadata's lookup.
+    """
     try:
-        return pkg_version("code-review-graph")
+        v = pkg_version("code-review-graph")
+        if v:
+            return v
     except PackageNotFoundError as exc:
-        logger.debug("Package metadata unavailable, falling back to 'dev': %s", exc)
-        return "dev"
+        logger.debug("Package metadata unavailable: %s", exc)
+    # Fallback: read __version__ directly from the package.
+    try:
+        from . import __version__ as fallback_version
+        if fallback_version:
+            return fallback_version
+    except ImportError:
+        pass
+    return "dev"
 
 
 def _supports_color() -> bool:
@@ -333,21 +345,6 @@ def _handle_init(args: argparse.Namespace) -> None:
     print("  2. Restart your AI coding tool to pick up the new config")
 
 
-def _cli_post_process(store: GraphStore) -> None:
-    """Run post-build pipeline and print a summary line for each step."""
-    from .postprocessing import run_post_processing
-
-    pp = run_post_processing(store)
-    if pp.get("signatures_computed"):
-        print(f"Signatures: {pp['signatures_computed']} nodes")
-    if pp.get("fts_indexed"):
-        print(f"FTS indexed: {pp['fts_indexed']} nodes")
-    if pp.get("flows_detected") is not None:
-        print(f"Flows: {pp['flows_detected']}")
-    if pp.get("communities_detected") is not None:
-        print(f"Communities: {pp['communities_detected']}")
-
-
 def _handle_data_dir_option(args, repo_root: Path) -> None:
     """Handle --data-dir option by updating registry if specified."""
     if hasattr(args, "data_dir") and args.data_dir:
@@ -506,6 +503,24 @@ def main() -> None:
         help="Skip all post-processing (raw parse only)",
     )
     update_cmd.add_argument(
+        "--brief",
+        action="store_true",
+        help="After re-parsing changed files into the graph, also print the "
+             "risk summary + Token Savings panel that 'detect-changes --brief' "
+             "prints. Use this after a rebase or large change set when you "
+             "want to refresh the graph AND see the impact in one command; "
+             "use 'detect-changes --brief' alone when the graph is already "
+             "up to date (analysis only, no re-parse).",
+    )
+    update_cmd.add_argument(
+        "--verify",
+        action="store_true",
+        help="Calibrate the estimated savings against tiktoken's "
+             "cl100k_base tokenizer (the GPT-4 family tokenizer). Adds a "
+             "second row to the panel with the real token counts. Requires "
+             "`pip install tiktoken`.",
+    )
+    update_cmd.add_argument(
         "--data-dir",
         default=None,
         help="External directory to store graph database (useful for network shares)"
@@ -643,7 +658,8 @@ def main() -> None:
         "--benchmark",
         default=None,
         help="Comma-separated benchmarks to run (token_efficiency, impact_accuracy, "
-        "flow_completeness, search_quality, build_performance)",
+        "agent_baseline, flow_completeness, search_quality, build_performance, "
+        "multi_hop_retrieval)",
     )
     eval_cmd.add_argument("--repo", default=None, help="Comma-separated repo config names")
     eval_cmd.add_argument("--all", action="store_true", dest="run_all", help="Run all benchmarks")
@@ -651,10 +667,27 @@ def main() -> None:
     eval_cmd.add_argument("--output-dir", default=None, help="Output directory for results")
 
     # detect-changes
-    detect_cmd = sub.add_parser("detect-changes", help="Analyze change impact")
+    detect_cmd = sub.add_parser(
+        "detect-changes",
+        help="Analyze change impact against the existing graph (read-only). "
+             "Does NOT re-parse files — for that, use 'update --brief'.",
+    )
     detect_cmd.add_argument("--base", default="HEAD~1", help="Git diff base (default: HEAD~1)")
-    detect_cmd.add_argument("--brief", action="store_true", help="Show brief summary only")
+    detect_cmd.add_argument(
+        "--brief",
+        action="store_true",
+        help="Show the risk summary + Token Savings panel instead of the "
+             "full JSON. Read-only against the existing graph.",
+    )
     detect_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
+    detect_cmd.add_argument(
+        "--verify",
+        action="store_true",
+        help="Calibrate the estimated savings against tiktoken's "
+             "cl100k_base tokenizer (the GPT-4 family tokenizer). Adds a "
+             "second row to the panel with the real token counts. Requires "
+             "`pip install tiktoken`.",
+    )
 
     # serve / mcp
     serve_cmd = sub.add_parser(
@@ -1005,7 +1038,6 @@ def main() -> None:
             print(f"Full build: {parsed} files, {nodes} nodes, {edges} edges (postprocess={pp})")
             if result.get("errors"):
                 print(f"Errors: {len(result['errors'])}")
-            _cli_post_process(store)
 
         elif args.command == "update":
             pp = (
@@ -1029,8 +1061,60 @@ def main() -> None:
                 f"{nodes} nodes, {edges} edges"
                 f" (postprocess={pp})"
             )
-            if result.get("files_updated", 0) > 0:
-                _cli_post_process(store)
+
+            # --brief: append a one-line change-impact summary with the same
+            # estimated context-savings approximation that detect-changes uses.
+            # Same baseline (changed files vs analysis response), so the two
+            # commands are directly comparable.
+            if getattr(args, "brief", False):
+                from .changes import analyze_changes
+                from .context_savings import (
+                    attach_context_savings,
+                    estimate_file_tokens,
+                    format_context_savings_panel,
+                )
+                from .incremental import (
+                    get_changed_files,
+                    get_staged_and_unstaged,
+                )
+
+                changed = get_changed_files(repo_root, args.base)
+                if not changed:
+                    changed = get_staged_and_unstaged(repo_root)
+                if changed:
+                    impact = analyze_changes(
+                        store,
+                        changed,
+                        repo_root=str(repo_root),
+                        base=args.base,
+                    )
+                    original_tokens = estimate_file_tokens(repo_root, changed)
+                    attach_context_savings(
+                        impact,
+                        original_tokens=original_tokens,
+                    )
+                    summary = impact.get("summary", "")
+                    if summary:
+                        print(summary)
+                    verified = None
+                    if getattr(args, "verify", False):
+                        from .context_savings import verify_with_tiktoken
+                        verified = verify_with_tiktoken(
+                            repo_root, changed, impact,
+                        )
+                        if verified is None:
+                            print(
+                                "Note: --verify requires tiktoken. "
+                                "Install with `pip install tiktoken`.",
+                            )
+                    panel = format_context_savings_panel(
+                        impact.get("context_savings"),
+                        original_tokens=original_tokens,
+                        response=impact,
+                        verified=verified,
+                    )
+                    if panel:
+                        print(panel)
 
         elif args.command == "status":
             stats = store.get_stats()
@@ -1194,6 +1278,10 @@ def main() -> None:
 
         elif args.command == "detect-changes":
             from .changes import analyze_changes
+            from .context_savings import (
+                attach_context_savings,
+                estimate_file_tokens,
+            )
             from .incremental import get_changed_files, get_staged_and_unstaged
 
             base = args.base
@@ -1210,8 +1298,33 @@ def main() -> None:
                     repo_root=str(repo_root),
                     base=base,
                 )
+                original_tokens = estimate_file_tokens(repo_root, changed)
+                attach_context_savings(
+                    result,
+                    original_tokens=original_tokens,
+                )
                 if args.brief:
+                    from .context_savings import (
+                        format_context_savings_panel,
+                        verify_with_tiktoken,
+                    )
                     print(result.get("summary", "No summary available."))
+                    verified = None
+                    if getattr(args, "verify", False):
+                        verified = verify_with_tiktoken(repo_root, changed, result)
+                        if verified is None:
+                            print(
+                                "Note: --verify requires tiktoken. "
+                                "Install with `pip install tiktoken`.",
+                            )
+                    panel = format_context_savings_panel(
+                        result.get("context_savings"),
+                        original_tokens=original_tokens,
+                        response=result,
+                        verified=verified,
+                    )
+                    if panel:
+                        print(panel)
                 else:
                     print(json.dumps(result, indent=2, default=str))
 

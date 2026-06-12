@@ -706,7 +706,7 @@ def collect_all_files(
             When *None*, falls back to ``CRG_RECURSE_SUBMODULES`` env var.
     """
     ignore_patterns = _load_ignore_patterns(repo_root)
-    parser = CodeParser()
+    parser = CodeParser(repo_root)
     files = []
 
     # Prefer git ls-files for tracked files
@@ -1043,7 +1043,7 @@ def _parse_single_file(
     try:
         raw = abs_path.read_bytes()
         fhash = hashlib.sha256(raw).hexdigest()
-        parser = CodeParser()
+        parser = CodeParser(Path(repo_root_str))
         nodes, edges = parser.parse_bytes(abs_path, raw)
         return (rel_path, nodes, edges, None, fhash)
     except Exception as e:
@@ -1063,7 +1063,7 @@ def full_build(
         recurse_submodules: If True, include files from git submodules.
             When *None*, falls back to ``CRG_RECURSE_SUBMODULES`` env var.
     """
-    parser = CodeParser()
+    parser = CodeParser(repo_root)
     files = collect_all_files(repo_root, recurse_submodules)
 
     # Purge stale data from files no longer on disk
@@ -1166,7 +1166,7 @@ def incremental_update(
     changed_files: list[str] | None = None,
 ) -> dict:
     """Incremental update: re-parse changed + dependent files only."""
-    parser = CodeParser()
+    parser = CodeParser(repo_root)
     ignore_patterns = _load_ignore_patterns(repo_root)
 
     # Determine changed files
@@ -1335,7 +1335,7 @@ def watch(
     from watchdog.events import FileSystemEventHandler
     from watchdog.observers import Observer
 
-    parser = CodeParser()
+    parser = CodeParser(repo_root)
     ignore_patterns = _load_ignore_patterns(repo_root)
 
     class GraphUpdateHandler(FileSystemEventHandler):

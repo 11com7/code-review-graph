@@ -1,5 +1,7 @@
 <h1 align="center">code-review-graph</h1>
 
+> **नोट:** यह अनुवाद एक पुराने रिलीज़ पर आधारित है; बेंचमार्क आंकड़े और प्लेटफ़ॉर्म सूचियाँ [अंग्रेज़ी README](README.md) से पीछे हो सकती हैं।
+
 <p align="center">
   <strong>टोकन बर्बाद करना बंद करें। स्मार्ट रिव्यू शुरू करें।</strong>
 </p>
@@ -26,7 +28,7 @@
 
 <br>
 
-AI कोडिंग टूल्स हर टास्क पर आपका पूरा कोडबेस दोबारा पढ़ते हैं। `code-review-graph` इस समस्या को हल करता है। यह [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) से आपके कोड का स्ट्रक्चरल मैप बनाता है, बदलावों को इंक्रीमेंटली ट्रैक करता है, और [MCP](https://modelcontextprotocol.io/) के ज़रिए आपके AI असिस्टेंट को सटीक कॉन्टेक्स्ट देता है ताकि वह केवल ज़रूरी कोड ही पढ़े।
+AI कोडिंग टूल्स रिव्यू टास्क में आपके कोडबेस के बड़े हिस्से दोबारा पढ़ सकते हैं। `code-review-graph` इस समस्या को हल करता है। यह [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) से आपके कोड का स्ट्रक्चरल मैप बनाता है, बदलावों को इंक्रीमेंटली ट्रैक करता है, और [MCP](https://modelcontextprotocol.io/) के ज़रिए आपके AI असिस्टेंट को सटीक कॉन्टेक्स्ट देता है ताकि वह केवल ज़रूरी कोड ही पढ़े।
 
 <p align="center">
   <img src="diagrams/diagram1_before_vs_after.png" alt="टोकन समस्या: 6 वास्तविक रिपॉज़िटरीज़ में औसतन 8.2 गुना टोकन कमी" width="85%" />
@@ -45,7 +47,7 @@ code-review-graph build            # अपना कोडबेस पार�
 एक कमांड सब कुछ सेट कर देता है। `install` पहचान लेता है कि आपके पास कौन से AI कोडिंग टूल हैं, प्रत्येक के लिए सही MCP कॉन्फ़िगरेशन लिखता है, और आपके प्लेटफ़ॉर्म रूल्स में ग्राफ-अवेयर निर्देश जोड़ता है। यह स्वचालित रूप से पहचानता है कि आपने `uvx` या `pip`/`pipx` से इंस्टॉल किया है और उसके अनुसार कॉन्फ़िग बनाता है। इंस्टॉल के बाद अपना एडिटर/टूल रीस्टार्ट करें।
 
 <p align="center">
-  <img src="diagrams/diagram8_supported_platforms.png" alt="एक इंस्टॉल, हर प्लेटफ़ॉर्म: Codex, Claude Code, Cursor, Windsurf, Zed, Continue, OpenCode, Antigravity, और Kiro को स्वचालित रूप से पहचानता है" width="85%" />
+  <img src="diagrams/diagram8_supported_platforms.png" alt="एक इंस्टॉल में समर्थित AI कोडिंग टूल्स को स्वचालित रूप से पहचानता और कॉन्फ़िगर करता है" width="85%" />
 </p>
 
 किसी विशेष प्लेटफ़ॉर्म को टार्गेट करने के लिए:
@@ -65,7 +67,7 @@ Python 3.10+ आवश्यक है। सबसे अच्छे अनु
 Build the code review graph for this project
 ```
 
-प्रारंभिक बिल्ड 500 फ़ाइलों के प्रोजेक्ट के लिए लगभग 10 सेकंड लेता है। उसके बाद, हर फ़ाइल एडिट और git कमिट पर ग्राफ स्वचालित रूप से अपडेट होता रहता है।
+प्रारंभिक बिल्ड 500 फ़ाइलों के प्रोजेक्ट के लिए लगभग 10 सेकंड लेता है। उसके बाद, watch mode और समर्थित platform hooks से ग्राफ स्वचालित रूप से अपडेट हो सकता है।
 
 ---
 
@@ -91,7 +93,7 @@ Build the code review graph for this project
 
 ### इंक्रीमेंटल अपडेट < 2 सेकंड में
 
-हर git कमिट या फ़ाइल सेव पर एक हुक चलता है। ग्राफ SHA-256 हैश चेक के ज़रिए बदली हुई फ़ाइलों और उनके डिपेंडेंट्स को ढूंढता है, और केवल बदले हुए कोड को री-पार्स करता है। 2,900 फ़ाइलों का प्रोजेक्ट 2 सेकंड से कम में री-इंडेक्स होता है।
+हुक्स या watch mode सक्षम होने पर फ़ाइल सेव और समर्थित commit hooks incremental updates शुरू करते हैं। ग्राफ SHA-256 हैश चेक के ज़रिए बदली हुई फ़ाइलों और उनके डिपेंडेंट्स को ढूंढता है, और केवल बदले हुए कोड को री-पार्स करता है। 2,900 फ़ाइलों का प्रोजेक्ट 2 सेकंड से कम में री-इंडेक्स होता है।
 
 <p align="center">
   <img src="diagrams/diagram4_incremental_update.png" alt="इंक्रीमेंटल अपडेट फ़्लो: git कमिट ट्रिगर करता है, डिफ़ ढूंढता है, केवल 5 फ़ाइलें री-पार्स होती हैं जबकि 2,910 स्किप होती हैं" width="90%" />
@@ -105,20 +107,20 @@ Build the code review graph for this project
   <img src="diagrams/diagram6_monorepo_funnel.png" alt="Next.js मोनोरिपो: 27,732 फ़ाइलें code-review-graph से होकर ~15 फ़ाइलों तक — 49 गुना कम टोकन" width="80%" />
 </p>
 
-### 23 भाषाएं + Jupyter नोटबुक
+### व्यापक भाषा सपोर्ट + Jupyter नोटबुक
 
 <p align="center">
-  <img src="diagrams/diagram9_language_coverage.png" alt="19 भाषाएं श्रेणी के अनुसार: वेब, बैकेंड, सिस्टम्स, मोबाइल, स्क्रिप्टिंग, और Jupyter/Databricks नोटबुक सपोर्ट" width="90%" />
+  <img src="diagrams/diagram9_language_coverage.png" alt="श्रेणी के अनुसार भाषा सपोर्ट: वेब, बैकेंड, सिस्टम्स, मोबाइल, स्क्रिप्टिंग, और Jupyter/Databricks नोटबुक सपोर्ट" width="90%" />
 </p>
 
-हर भाषा में फ़ंक्शन, क्लासेज़, इम्पोर्ट्स, कॉल साइट्स, इनहेरिटेंस, और टेस्ट डिटेक्शन के लिए पूर्ण Tree-sitter ग्रामर सपोर्ट। इसमें Zig, PowerShell, Julia, और Svelte SFC सपोर्ट शामिल है। साथ ही मल्टी-लैंग्वेज सेल सपोर्ट (Python, R, SQL) के साथ Jupyter/Databricks नोटबुक पार्सिंग (`.ipynb`), और Perl XS फ़ाइलें (`.xs`)।
+मौजूदा पार्सर जिन सतहों को सपोर्ट करता है, उनमें फ़ंक्शन, क्लासेज़, इम्पोर्ट्स, कॉल साइट्स, इनहेरिटेंस, और टेस्ट डिटेक्शन के लिए स्ट्रक्चरल एक्सट्रैक्शन मिलता है। जहाँ उपलब्ध हो वहाँ Tree-sitter इस्तेमाल होता है, और ज़रूरत पड़ने पर targeted fallback parsers इस्तेमाल होते हैं। सपोर्ट में Python, JavaScript/TypeScript/TSX, Go, Rust, Java, C/C++, C#, Ruby, Kotlin, Swift, PHP, Scala, Solidity, Dart, R, Perl, Lua/Luau, Objective-C, shell scripts, Elixir, Zig, PowerShell, Julia, ReScript, GDScript, Nix, Verilog/SystemVerilog, SQL, Vue/Svelte SFCs, TypeScript parser से parse होने वाली Astro files, Jupyter/Databricks नोटबुक (`.ipynb`), और Perl XS फ़ाइलें (`.xs`) शामिल हैं।
 
 ---
 
 ## बेंचमार्क
 
 <p align="center">
-  <img src="diagrams/diagram5_benchmark_board.png" alt="वास्तविक रिपॉज़ में बेंचमार्क: 4.9 गुना से 27.3 गुना तक कम टोकन, बेहतर रिव्यू गुणवत्ता" width="85%" />
+  <img src="diagrams/diagram5_benchmark_board.png" alt="वास्तविक रिपॉज़ में बेंचमार्क: 4.9 गुना से 27.3 गुना तक कम टोकन और conservative impact analysis" width="85%" />
 </p>
 
 सभी आंकड़े 6 वास्तविक ओपन-सोर्स रिपॉज़िटरीज़ (कुल 13 कमिट्स) पर स्वचालित मूल्यांकन रनर से आते हैं। `code-review-graph eval --all` से पुनः प्राप्त करें। विस्तृत बेंचमार्क डेटा के लिए [अंग्रेज़ी README](README.md) देखें।
@@ -130,7 +132,7 @@ Build the code review graph for this project
 | विशेषता | विवरण |
 |---------|--------|
 | **इंक्रीमेंटल अपडेट** | केवल बदली हुई फ़ाइलों को री-पार्स करता है। बाद के अपडेट 2 सेकंड से कम में पूरे होते हैं। |
-| **23 भाषाएं + नोटबुक** | Python, TypeScript/TSX, JavaScript, Vue, Svelte, Go, Rust, Java, Scala, C#, Ruby, Kotlin, Swift, PHP, Solidity, C/C++, Dart, R, Perl, Lua, Zig, PowerShell, Julia, Jupyter/Databricks (.ipynb) |
+| **व्यापक भाषा सपोर्ट + नोटबुक** | Python, JavaScript/TypeScript/TSX, Go, Rust, Java, C/C++, C#, Ruby, Kotlin, Swift, PHP, Scala, Solidity, Dart, R, Perl, Lua/Luau, Objective-C, shell, Elixir, Zig, PowerShell, Julia, ReScript, GDScript, Nix, Verilog/SystemVerilog, SQL, Vue/Svelte SFCs, Astro files parsed as TypeScript, Jupyter/Databricks (.ipynb) |
 | **ब्लास्ट-रेडियस विश्लेषण** | दिखाता है कि किसी भी बदलाव से कौन से फ़ंक्शन, क्लासेज़, और फ़ाइलें प्रभावित होती हैं |
 | **ऑटो-अपडेट हुक्स** | बिना मैन्युअल हस्तक्षेप के हर फ़ाइल एडिट और git कमिट पर ग्राफ अपडेट होता है |
 | **सिमेंटिक सर्च** | sentence-transformers, Google Gemini, MiniMax, या किसी भी OpenAI-compatible एंडपॉइंट (असली OpenAI, Azure, new-api, LiteLLM, vLLM, LocalAI) के ज़रिए वैकल्पिक वेक्टर एम्बेडिंग |
@@ -156,7 +158,7 @@ Build the code review graph for this project
 | **मल्टी-रिपो रजिस्ट्री** | कई रिपॉज़ रजिस्टर करें, सभी में सर्च करें |
 | **MCP प्रॉम्प्ट्स** | 5 वर्कफ़्लो टेम्प्लेट: review, architecture, debug, onboard, pre-merge |
 | **फ़ुल-टेक्स्ट सर्च** | कीवर्ड और वेक्टर सिमिलैरिटी को मिलाकर FTS5-संचालित हाइब्रिड सर्च |
-| **लोकल स्टोरेज** | `.code-review-graph/` में SQLite फ़ाइल। कोई बाहरी डेटाबेस नहीं, कोई क्लाउड निर्भरता नहीं। |
+| **लोकल स्टोरेज** | `.code-review-graph/` में SQLite फ़ाइल। core graph storage के लिए बाहरी डेटाबेस या क्लाउड सर्विस की ज़रूरत नहीं। |
 | **वॉच मोड** | काम करते समय लगातार ग्राफ अपडेट |
 
 ---
@@ -203,7 +205,7 @@ code-review-graph serve            # MCP सर्वर शुरू करे�
 </details>
 
 <details>
-<summary><strong>28 MCP टूल्स</strong></summary>
+<summary><strong>30 MCP टूल्स</strong></summary>
 <br>
 
 ग्राफ बनने के बाद आपका AI असिस्टेंट इन्हें स्वचालित रूप से उपयोग करता है।
@@ -211,6 +213,7 @@ code-review-graph serve            # MCP सर्वर शुरू करे�
 | टूल | विवरण |
 |-----|--------|
 | `build_or_update_graph_tool` | ग्राफ बनाएं या इंक्रीमेंटली अपडेट करें |
+| `run_postprocess_tool` | एक्ज़ीक्यूशन फ़्लोज़, कम्युनिटीज़ और फुल-टेक्स्ट इंडेक्स की पोस्ट-प्रोसेसिंग फिर चलाएं |
 | `get_minimal_context_tool` | अल्ट्रा-कॉम्पैक्ट कॉन्टेक्स्ट (~100 टोकन) — इसे पहले कॉल करें |
 | `get_impact_radius_tool` | बदली हुई फ़ाइलों का ब्लास्ट रेडियस |
 | `get_review_context_tool` | स्ट्रक्चरल सारांश के साथ टोकन-ऑप्टिमाइज़्ड रिव्यू कॉन्टेक्स्ट |
@@ -266,6 +269,7 @@ node_modules/**
 pip install code-review-graph[embeddings]          # लोकल वेक्टर एम्बेडिंग (sentence-transformers)
 pip install code-review-graph[google-embeddings]   # Google Gemini एम्बेडिंग
 pip install code-review-graph[communities]         # कम्युनिटी डिटेक्शन (igraph)
+pip install code-review-graph[enrichment]          # Python call-resolution enrichment (Jedi)
 pip install code-review-graph[eval]                # मूल्यांकन बेंचमार्क (matplotlib)
 pip install code-review-graph[wiki]                # LLM सारांश के साथ विकी जनरेशन (ollama)
 pip install code-review-graph[all]                 # सभी वैकल्पिक डिपेंडेंसीज़
@@ -319,5 +323,5 @@ MIT। [LICENSE](LICENSE) देखें।
 <br>
 <a href="https://code-review-graph.com">code-review-graph.com</a><br><br>
 <code>pip install code-review-graph && code-review-graph install</code><br>
-<sub>Codex, Claude Code, Cursor, Windsurf, Zed, Continue, OpenCode, Antigravity, और Kiro के साथ काम करता है</sub>
+<sub>Codex, Claude Code, Cursor, Windsurf, Zed, Continue, OpenCode, Antigravity, Gemini CLI, Qwen, Kiro, Qoder, और GitHub Copilot सहित समर्थित AI कोडिंग टूल्स को स्वचालित रूप से पहचानता और कॉन्फ़िगर करता है</sub>
 </p>

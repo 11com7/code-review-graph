@@ -113,6 +113,26 @@ class TestRustParsing:
         calls = [e for e in self.edges if e.kind == "CALLS"]
         assert len(calls) >= 3
 
+    def test_detects_test_attribute(self):
+        tests = [n for n in self.nodes if n.kind == "Test"]
+        names = {t.name for t in tests}
+        assert "new_repo_is_empty" in names
+        assert "create_user_saves_to_repo" in names
+        assert all(t.is_test for t in tests)
+
+    def test_detects_tokio_test_attribute(self):
+        tests = {n.name for n in self.nodes if n.kind == "Test"}
+        assert "async_test_is_detected" in tests
+
+    def test_non_test_functions_not_misclassified(self):
+        funcs = {n.name for n in self.nodes if n.kind == "Function"}
+        assert "create_user" in funcs
+        assert "new" in funcs
+        # `create_user` carries no `#[test]` — must stay Function.
+        for n in self.nodes:
+            if n.name == "create_user":
+                assert not n.is_test
+
 
 class TestJavaParsing:
     def setup_method(self):
@@ -2293,7 +2313,11 @@ class TestRescriptEdgeCases:
             and e.extra.get("rescript_call_kind") == "jsx"
         ]
         call_targets = {e.target for e in jsx_calls}
-        assert "User.Badge" in call_targets
+        # ``User`` is a module defined in this file, so the call target gets
+        # qualified by ``_resolve_call_targets`` (fork: same-file
+        # ClassName.method resolution); ``AnalyticsFilterUi`` is external and
+        # stays bare.
+        assert any(t.endswith("User.Badge") for t in call_targets)
         assert "AnalyticsFilterUi.Filter" in call_targets
 
     def test_jsx_call_attributed_to_enclosing_let(self):
