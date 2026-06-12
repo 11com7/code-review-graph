@@ -1147,3 +1147,87 @@ class TestGetMinimalContext:
             task="refactor auth module", repo_root=str(self.root),
         )
         assert "refactor" in result["next_tool_suggestions"]
+
+
+class TestSemanticSearchHonestMode:
+    """``semantic_search_nodes`` must report the search mode that actually
+    ran. Previously it claimed "hybrid" whenever results existed, even when
+    the vector path never participated (no embeddings, provider mismatch)."""
+
+    def setup_method(self):
+        self.tmp_dir = tempfile.mkdtemp()
+        self.root = Path(self.tmp_dir).resolve()
+        (self.root / ".git").mkdir()
+        (self.root / ".code-review-graph").mkdir()
+
+        db_path = str(self.root / ".code-review-graph" / "graph.db")
+        self.store = GraphStore(db_path)
+        self.store.upsert_node(NodeInfo(
+            kind="Function", name="authenticate", file_path="auth.py",
+            line_start=5, line_end=30, language="python",
+        ), file_hash="abc123")
+        self.store._conn.commit()
+
+        from code_review_graph.search import rebuild_fts_index
+        rebuild_fts_index(self.store)
+
+    def teardown_method(self):
+        self.store.close()
+        import shutil
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def test_search_mode_is_fts_without_embeddings(self):
+        from code_review_graph.tools.query import semantic_search_nodes
+
+        result = semantic_search_nodes(
+            "authenticate", repo_root=str(self.root),
+        )
+        assert result["status"] == "ok"
+        assert result["results"]
+        assert result["search_mode"] == "fts"
+
+    def test_warning_on_provider_model_mismatch(self):
+        from unittest.mock import MagicMock, patch
+
+        from code_review_graph.embeddings import _encode_vector
+        from code_review_graph.tools.query import semantic_search_nodes
+
+        self.store._conn.execute("""
+            CREATE TABLE IF NOT EXISTS embeddings (
+                qualified_name TEXT PRIMARY KEY,
+                vector BLOB NOT NULL,
+                text_hash TEXT NOT NULL,
+                provider TEXT NOT NULL DEFAULT 'unknown'
+            )
+        """)
+        self.store._conn.execute(
+            "INSERT OR REPLACE INTO embeddings "
+            "(qualified_name, vector, text_hash, provider) VALUES (?, ?, ?, ?)",
+            ("authenticate", _encode_vector([1.0, 0.0]), "h",
+             "local:all-MiniLM-L6-v2"),
+        )
+        self.store._conn.commit()
+
+        mock_provider = MagicMock()
+        mock_provider.name = "local:paraphrase-multilingual-MiniLM-L12-v2"
+
+        with patch(
+            "code_review_graph.embeddings.get_provider",
+            return_value=mock_provider,
+        ):
+            result = semantic_search_nodes(
+                "authenticate", repo_root=str(self.root),
+            )
+
+        assert result["search_mode"] == "fts"
+        assert "warning" in result
+        assert "local:all-MiniLM-L6-v2" in result["warning"]
+        assert "embed" in result["warning"].lower()
+
+    def test_no_warning_without_mismatch(self):
+        from code_review_graph.tools.query import semantic_search_nodes
+
+        result = semantic_search_nodes(
+            "authenticate", repo_root=str(self.root),
+        )
+        assert "warning" not in result

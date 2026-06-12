@@ -2,7 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`code-review-graph embed` CLI command** (11com7): computes (or re-computes) vector embeddings outside the MCP request path. Re-embedding a large repo — e.g. after switching `CRG_EMBEDDING_MODEL` — can take many minutes and previously had to go through the `embed_graph` MCP tool, where client timeouts cut it off. The command embeds in chunks (default 500 nodes, `--batch-size`) with progress output and per-chunk commits, so an interrupted run resumes where it left off. Supports `--model`, `--provider`, `--repo` and `--data-dir`.
+
 ### Fixed
+
+- **`semantic_search_nodes` no longer mislabels results as "hybrid"** (11com7): the `search_mode` field always claimed `"hybrid"` for non-empty results, even when the vector path never ran (no embeddings, model still loading, provider mismatch) and results were FTS5/keyword-only. `hybrid_search()` now reports which paths actually contributed via a new `diagnostics` out-parameter, and the tool surfaces an honest mode: `hybrid`, `fts`, `vector`, or `keyword`.
+
+- **Provider/model mismatch is reported instead of silently degrading** (11com7): when stored embeddings belong to a different provider or model than the active one (e.g. embeddings built with `all-MiniLM-L6-v2`, then `CRG_EMBEDDING_MODEL` switched to a multilingual model), the provider filter matched 0 vectors and semantic search silently fell back to keyword search — while still labeled "hybrid". The search response now includes a `warning` explaining the mismatch and how to re-embed (`embed_graph` tool or `code-review-graph embed`). As a bonus the mismatch check runs *before* the query is embedded, so it no longer triggers a pointless model load just to find 0 matching vectors.
 
 - **Windows: MCP server marked as failed on cold start** (11com7): `main()` called `import sentence_transformers` on the main thread just to check whether the package is installed. On Windows this pulls in PyTorch and all its DLLs synchronously — typically 10–30 s — which blocks the stdio handshake long enough for MCP clients (e.g. Claude Code) to time out and mark the server as failed before any tools are registered. Fixed by replacing the bare import with `importlib.util.find_spec('sentence_transformers')`, a pure file-system lookup that takes < 1 ms and has no import side effects. The daemon thread that actually loads the model is unchanged. See: #46, #136
 

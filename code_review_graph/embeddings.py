@@ -1042,6 +1042,18 @@ class EmbeddingStore:
     def count(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
 
+    def provider_counts(self) -> dict[str, int]:
+        """Count stored embeddings grouped by provider identity.
+
+        Lets callers detect a provider/model mismatch (vectors exist, but
+        none for the active provider) without embedding a query first —
+        which for the local provider would needlessly load the model.
+        """
+        rows = self._conn.execute(
+            "SELECT provider, COUNT(*) FROM embeddings GROUP BY provider"
+        ).fetchall()
+        return {row[0]: row[1] for row in rows}
+
 
 def embed_all_nodes(graph_store: GraphStore, embedding_store: EmbeddingStore) -> int:
     """Embed all non-file nodes in the graph."""

@@ -268,3 +268,140 @@ class TestHybridSearch:
         # Verify search still works after double-rebuild.
         results = hybrid_search(self.store, "auth")
         assert isinstance(results, list)
+
+
+class TestSearchDiagnostics:
+    """hybrid_search must report which search paths actually contributed,
+    so callers can surface an honest ``search_mode`` instead of always
+    labeling results "hybrid" (which silently hid keyword-only fallback)."""
+
+    def setup_method(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.tmp.close()  # release the Windows file handle; we only need the path
+        self.store = GraphStore(self.tmp.name)
+        nodes = [
+            NodeInfo(
+                kind="Function", name="get_users", file_path="api.py",
+                line_start=1, line_end=20, language="python",
+            ),
+            NodeInfo(
+                kind="Function", name="authenticate", file_path="auth.py",
+                line_start=5, line_end=30, language="python",
+            ),
+        ]
+        for node in nodes:
+            self.store.upsert_node(node, file_hash="abc123")
+        self.store._conn.commit()
+
+    def teardown_method(self):
+        self.store.close()
+        Path(self.tmp.name).unlink(missing_ok=True)
+
+    def _insert_embedding(self, qualified_name: str, vector, provider: str):
+        from code_review_graph.embeddings import _encode_vector
+        self.store._conn.execute(
+            "INSERT OR REPLACE INTO embeddings "
+            "(qualified_name, vector, text_hash, provider) VALUES (?, ?, ?, ?)",
+            (qualified_name, _encode_vector(vector), "hash", provider),
+        )
+        self.store._conn.commit()
+
+    def _ensure_embeddings_table(self):
+        self.store._conn.execute("""
+            CREATE TABLE IF NOT EXISTS embeddings (
+                qualified_name TEXT PRIMARY KEY,
+                vector BLOB NOT NULL,
+                text_hash TEXT NOT NULL,
+                provider TEXT NOT NULL DEFAULT 'unknown'
+            )
+        """)
+        self.store._conn.commit()
+
+    def _qualified_name(self, name: str) -> str:
+        row = self.store._conn.execute(
+            "SELECT qualified_name FROM nodes WHERE name = ?", (name,)
+        ).fetchone()
+        return row["qualified_name"]
+
+    def test_mode_fts_when_no_embeddings(self):
+        rebuild_fts_index(self.store)
+        diagnostics = {}
+        results = hybrid_search(
+            self.store, "authenticate", diagnostics=diagnostics,
+        )
+        assert results
+        assert diagnostics["mode"] == "fts"
+        assert diagnostics["fts"] is True
+        assert diagnostics["vector"] is False
+
+    def test_mode_keyword_when_no_fts_and_no_embeddings(self):
+        self.store._conn.execute("DROP TABLE IF EXISTS nodes_fts")
+        self.store._conn.commit()
+        diagnostics = {}
+        results = hybrid_search(
+            self.store, "get_users", diagnostics=diagnostics,
+        )
+        assert results
+        assert diagnostics["mode"] == "keyword"
+        assert diagnostics["fts"] is False
+        assert diagnostics["vector"] is False
+
+    def test_mode_hybrid_when_vector_results(self):
+        import os
+        from unittest.mock import MagicMock, patch
+
+        rebuild_fts_index(self.store)
+        self._ensure_embeddings_table()
+        qn = self._qualified_name("authenticate")
+        self._insert_embedding(qn, [1.0, 0.0, 0.0], "local:test-model")
+
+        mock_provider = MagicMock()
+        mock_provider.name = "local:test-model"
+        mock_provider.embed_query.return_value = [1.0, 0.0, 0.0]
+
+        diagnostics = {}
+        # CRG_EMBED_WORKER=1 selects the pure-Python cosine scoring path
+        # (the dev venv has no numpy; the provider itself is mocked anyway).
+        with patch.dict(os.environ, {"CRG_EMBED_WORKER": "1"}):
+            with patch(
+                "code_review_graph.embeddings.get_provider",
+                return_value=mock_provider,
+            ):
+                results = hybrid_search(
+                    self.store, "authenticate", diagnostics=diagnostics,
+                )
+        assert results
+        assert diagnostics["mode"] == "hybrid"
+        assert diagnostics["vector"] is True
+
+    def test_mismatch_reported_without_embedding_the_query(self):
+        """When stored embeddings belong to a different provider/model than
+        the active one, the search must (a) not waste a model load embedding
+        the query and (b) report the mismatch so the caller can warn."""
+        from unittest.mock import MagicMock, patch
+
+        rebuild_fts_index(self.store)
+        self._ensure_embeddings_table()
+        qn = self._qualified_name("authenticate")
+        self._insert_embedding(qn, [1.0, 0.0, 0.0], "local:all-MiniLM-L6-v2")
+
+        mock_provider = MagicMock()
+        mock_provider.name = "local:paraphrase-multilingual-MiniLM-L12-v2"
+
+        diagnostics = {}
+        with patch(
+            "code_review_graph.embeddings.get_provider",
+            return_value=mock_provider,
+        ):
+            results = hybrid_search(
+                self.store, "authenticate", diagnostics=diagnostics,
+            )
+
+        mock_provider.embed_query.assert_not_called()
+        assert results  # FTS still answers
+        assert diagnostics["mode"] == "fts"
+        mismatch = diagnostics["embedding_mismatch"]
+        assert mismatch["active_provider"] == (
+            "local:paraphrase-multilingual-MiniLM-L12-v2"
+        )
+        assert mismatch["stored_providers"] == {"local:all-MiniLM-L6-v2": 1}

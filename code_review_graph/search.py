@@ -179,11 +179,15 @@ def _embedding_search(
     limit: int = 50,
     model: str | None = None,
     provider: str | None = None,
+    diagnostics: dict | None = None,
 ) -> list[tuple[int, float]]:
     """Run a vector similarity search using the embedding store.
 
     Returns list of ``(node_id, similarity_score)`` tuples.
     Gracefully returns an empty list if embeddings are not available.
+    When ``diagnostics`` is given and stored vectors belong to a different
+    provider/model than the active one, an ``embedding_mismatch`` entry is
+    recorded so callers can warn instead of degrading silently.
     """
     try:
         from .embeddings import EmbeddingStore
@@ -197,7 +201,19 @@ def _embedding_search(
     try:
         emb_store = EmbeddingStore(store.db_path, provider=provider, model=model)
         try:
-            if not emb_store.available or emb_store.count() == 0:
+            if not emb_store.available:
+                return []
+
+            # Check for vectors of the active provider BEFORE embedding the
+            # query: embedding it would load the model just to find 0 rows.
+            counts = emb_store.provider_counts()
+            active = emb_store.provider.name
+            if counts.get(active, 0) == 0:
+                if counts and diagnostics is not None:
+                    diagnostics["embedding_mismatch"] = {
+                        "active_provider": active,
+                        "stored_providers": counts,
+                    }
                 return []
 
             results = emb_store.search(query, limit=limit)
@@ -281,6 +297,7 @@ def hybrid_search(
     context_files: Optional[list[str]] = None,
     model: Optional[str] = None,
     provider: Optional[str] = None,
+    diagnostics: Optional[dict] = None,
 ) -> list[dict[str, Any]]:
     """Hybrid search combining FTS5 BM25 and vector embeddings via RRF.
 
@@ -294,6 +311,10 @@ def hybrid_search(
         limit: Maximum results to return (default 20).
         context_files: Optional list of file paths. Nodes in these files
             receive a 1.5x score boost.
+        diagnostics: Optional dict populated with what actually ran:
+            ``fts`` / ``vector`` (bool), ``mode`` ("hybrid", "fts",
+            "vector" or "keyword"), and ``embedding_mismatch`` when stored
+            vectors belong to a different provider/model than the active one.
 
     Returns:
         List of dicts with node metadata and ``score`` field.
@@ -320,7 +341,22 @@ def hybrid_search(
     # Try embedding search
     emb_results = _embedding_search(
         store, query, limit=fetch_limit, model=model, provider=provider,
+        diagnostics=diagnostics,
     )
+
+    # Record what actually ran, so callers can report an honest search mode
+    # instead of assuming the vector path participated.
+    if diagnostics is not None:
+        diagnostics["fts"] = bool(fts_results)
+        diagnostics["vector"] = bool(emb_results)
+        if fts_results and emb_results:
+            diagnostics["mode"] = "hybrid"
+        elif fts_results:
+            diagnostics["mode"] = "fts"
+        elif emb_results:
+            diagnostics["mode"] = "vector"
+        else:
+            diagnostics["mode"] = "keyword"
 
     # ------ Phase 2: Merge via RRF or fallback ------
     if fts_results or emb_results:

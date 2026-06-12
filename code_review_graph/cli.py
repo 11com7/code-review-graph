@@ -11,6 +11,7 @@ Usage:
     code-review-graph mcp [--auto-watch]
     code-review-graph visualize
     code-review-graph wiki
+    code-review-graph embed [--model NAME] [--provider NAME] [--batch-size N]
     code-review-graph detect-changes [--base BASE] [--brief]
     code-review-graph register <path> [--alias name]
     code-review-graph unregister <path_or_alias>
@@ -105,6 +106,7 @@ def _print_banner() -> None:
     {g}status{r}      Show graph statistics
     {g}visualize{r}   Generate interactive HTML graph
     {g}wiki{r}        Generate markdown wiki from communities
+    {g}embed{r}       Compute embeddings for semantic search {d}(long-running safe){r}
     {g}detect-changes{r} Analyze change impact {d}(risk-scored review){r}
     {g}register{r}    Register a repository in the multi-repo registry
     {g}unregister{r}  Remove a repository from the registry
@@ -582,6 +584,43 @@ def main() -> None:
         help="External directory to store graph database (useful for network shares)"
     )
 
+    # embed
+    embed_cmd = sub.add_parser(
+        "embed",
+        help=(
+            "Compute vector embeddings for semantic search. Runs outside "
+            "the MCP request path, so large repos and slow first-time model "
+            "loads are not bottlenecked by client timeouts."
+        ),
+    )
+    embed_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
+    embed_cmd.add_argument(
+        "--model",
+        default=None,
+        help=(
+            "Embedding model name (falls back to CRG_EMBEDDING_MODEL, "
+            "then the provider default)"
+        ),
+    )
+    embed_cmd.add_argument(
+        "--provider",
+        default=None,
+        choices=["local", "openai", "google", "minimax"],
+        help="Embedding provider (default: local)",
+    )
+    embed_cmd.add_argument(
+        "--batch-size",
+        type=int,
+        default=500,
+        metavar="N",
+        help="Nodes per progress/commit chunk (default: 500)",
+    )
+    embed_cmd.add_argument(
+        "--data-dir",
+        default=None,
+        help="External directory to store graph database (useful for network shares)"
+    )
+
     # register
     register_cmd = sub.add_parser(
         "register", help="Register a repository in the multi-repo registry"
@@ -937,7 +976,9 @@ def main() -> None:
         repo_root = Path(args.repo) if args.repo else find_project_root()
 
     # Handle --data-dir for commands that support it
-    _data_dir_cmds = ("build", "update", "detect-changes", "status", "watch", "visualize", "wiki")
+    _data_dir_cmds = (
+        "build", "update", "detect-changes", "status", "watch", "visualize", "wiki", "embed",
+    )
     if args.command in _data_dir_cmds:
         _handle_data_dir_option(args, repo_root)
 
@@ -1088,6 +1129,53 @@ def main() -> None:
                             print("\nServer stopped.")
                 else:
                     print("Open in browser to explore.")
+
+        elif args.command == "embed":
+            from .embeddings import EmbeddingStore
+
+            emb_store = EmbeddingStore(
+                db_path, provider=args.provider, model=args.model,
+            )
+            try:
+                if not emb_store.available:
+                    print(
+                        "Embedding provider not available. For the local "
+                        "provider install with: "
+                        "pip install code-review-graph[embeddings]",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+
+                nodes = store.get_all_nodes(exclude_files=True)
+
+                provider_name = emb_store.provider.name
+                # flush=True: progress must be visible live even when stdout
+                # is a pipe (block-buffered), e.g. `... embed | tee log`.
+                print(
+                    f"Embedding {len(nodes)} node(s) with provider "
+                    f"'{provider_name}'...",
+                    flush=True,
+                )
+                # Chunked so long runs show progress and commit incrementally
+                # (embed_nodes commits per call) — an interrupted run resumes
+                # where it left off instead of starting over.
+                chunk = max(1, args.batch_size)
+                embedded = 0
+                for i in range(0, len(nodes), chunk):
+                    embedded += emb_store.embed_nodes(nodes[i:i + chunk])
+                    done = min(i + chunk, len(nodes))
+                    print(
+                        f"  {done}/{len(nodes)} processed, "
+                        f"{embedded} (re-)embedded",
+                        flush=True,
+                    )
+                print(
+                    f"Done: {embedded} newly embedded, "
+                    f"{emb_store.count()} total embeddings.",
+                    flush=True,
+                )
+            finally:
+                emb_store.close()
 
         elif args.command == "wiki":
             from .incremental import get_data_dir

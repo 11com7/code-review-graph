@@ -420,14 +420,29 @@ def semantic_search_nodes(
     """
     store, root = _get_store(repo_root)
     try:
+        diagnostics: dict[str, Any] = {}
         results = hybrid_search(
             store, query, kind=kind, limit=limit, context_files=context_files,
-            model=model, provider=provider,
+            model=model, provider=provider, diagnostics=diagnostics,
         )
 
-        search_mode = "hybrid"
-        if not results:
-            search_mode = "keyword"
+        # Honest mode reporting: "hybrid" only when the vector path really
+        # contributed. Previously this always claimed "hybrid" for non-empty
+        # results, hiding silent degradation to keyword-only search.
+        search_mode = diagnostics.get("mode", "keyword")
+
+        warning: str | None = None
+        mismatch = diagnostics.get("embedding_mismatch")
+        if mismatch:
+            stored = mismatch["stored_providers"]
+            total = sum(stored.values())
+            warning = (
+                f"{total} stored embedding(s) belong to "
+                f"{', '.join(sorted(stored))} but this search uses "
+                f"'{mismatch['active_provider']}'. Semantic search is "
+                "disabled until the graph is re-embedded: run the "
+                "embed_graph tool or `code-review-graph embed`."
+            )
 
         summary = f"Found {len(results)} node(s) matching '{query}'" + (
             f" (kind={kind})" if kind else ""
@@ -442,13 +457,16 @@ def semantic_search_nodes(
                 }
                 for r in results[:5]
             ]
-            return {
+            minimal: dict[str, object] = {
                 "status": "ok",
                 "query": query,
                 "search_mode": search_mode,
                 "summary": summary,
                 "results": minimal_results,
             }
+            if warning:
+                minimal["warning"] = warning
+            return minimal
 
         result: dict[str, object] = {
             "status": "ok",
@@ -457,6 +475,8 @@ def semantic_search_nodes(
             "summary": summary,
             "results": results,
         }
+        if warning:
+            result["warning"] = warning
         result["_hints"] = generate_hints(
             "semantic_search_nodes", result, get_session()
         )

@@ -131,3 +131,81 @@ class TestWatchInteraction:
                             assert False, "Expected SystemExit"
                         except SystemExit as exc:
                             assert exc.code == 1
+
+
+class TestEmbedCommand:
+    """``code-review-graph embed`` runs (re-)embedding outside the MCP
+    request path, so large repos are not bottlenecked by client timeouts."""
+
+    def setup_method(self):
+        import tempfile
+        from pathlib import Path
+
+        from code_review_graph.graph import GraphStore
+        from code_review_graph.parser import NodeInfo
+
+        self.tmp_dir = tempfile.mkdtemp()
+        self.root = Path(self.tmp_dir).resolve()
+        (self.root / ".git").mkdir()
+        (self.root / ".code-review-graph").mkdir()
+
+        store = GraphStore(str(self.root / ".code-review-graph" / "graph.db"))
+        for name in ("get_users", "authenticate"):
+            store.upsert_node(NodeInfo(
+                kind="Function", name=name, file_path="api.py",
+                line_start=1, line_end=10, language="python",
+            ), file_hash="abc123")
+        store._conn.commit()
+        store.close()
+
+    def teardown_method(self):
+        import shutil
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def _embedding_rows(self):
+        import sqlite3
+
+        conn = sqlite3.connect(
+            str(self.root / ".code-review-graph" / "graph.db")
+        )
+        try:
+            return conn.execute(
+                "SELECT qualified_name, provider FROM embeddings"
+            ).fetchall()
+        finally:
+            conn.close()
+
+    def test_embed_command_embeds_all_nodes(self, capsys):
+        mock_provider = MagicMock()
+        mock_provider.name = "local:test-model"
+        mock_provider.embed.side_effect = (
+            lambda texts: [[0.1, 0.2] for _ in texts]
+        )
+
+        argv = ["code-review-graph", "embed", "--repo", str(self.root)]
+        with patch.object(sys, "argv", argv):
+            with patch(
+                "code_review_graph.embeddings.get_provider",
+                return_value=mock_provider,
+            ):
+                cli.main()
+
+        out = capsys.readouterr().out
+        assert "local:test-model" in out
+        rows = self._embedding_rows()
+        assert len(rows) == 2
+        assert all(provider == "local:test-model" for _, provider in rows)
+
+    def test_embed_command_exits_1_when_provider_unavailable(self, capsys):
+        argv = ["code-review-graph", "embed", "--repo", str(self.root)]
+        with patch.object(sys, "argv", argv):
+            with patch(
+                "code_review_graph.embeddings.get_provider",
+                return_value=None,
+            ):
+                try:
+                    cli.main()
+                    assert False, "Expected SystemExit"
+                except SystemExit as exc:
+                    assert exc.code == 1
+
