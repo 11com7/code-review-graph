@@ -11,10 +11,12 @@ Supports multiple providers:
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import sqlite3
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -71,19 +73,161 @@ LOCAL_DEFAULT_MODEL = "all-MiniLM-L6-v2"
 # model from disk — taking 30–300 s for larger multilingual models and
 # exceeding typical MCP client timeouts. See: #46, #136
 _local_model_cache: dict[str, Any] = {}
-# Serializes concurrent model loads so that a background pre-warm thread and
-# an asyncio.to_thread call racing to load the same model don't both trigger
-# DLL loading simultaneously. After the first load the cache check is a fast
-# path that never acquires the lock. See: #46, #136
+# Serializes concurrent in-process model loads (non-Windows path). After the
+# first load the cache check is a fast path that never acquires the lock.
 _local_model_lock = threading.Lock()
-# Signals that the background pre-warm thread has finished loading the model
-# (or that no pre-warm is running). embed_graph_tool polls this on Windows
-# before submitting work to asyncio.to_thread, so thread-pool worker creation
-# never races with DLL loading. Initially set (= "done") because no pre-warm
-# is running at import time. main.py clears it before starting crg-prewarm
-# and sets it again in the finally block. See: #46, #136
-_prewarm_done: threading.Event = threading.Event()
-_prewarm_done.set()
+
+
+def _use_worker_process() -> bool:
+    """Whether to run the local model in a dedicated worker process.
+
+    On Windows, importing torch/numpy C extensions from any non-main thread
+    deadlocks on the OS DLL Loader Lock: the importing thread holds the lock
+    while torch's import machinery spawns helper threads whose
+    ``DllMain(DLL_THREAD_ATTACH)`` callbacks block on that same lock. This is
+    100% reproducible in the MCP server (asyncio thread pool) regardless of
+    pre-warm strategy, while loading on a dedicated process's main thread
+    works reliably. See embed_worker.py, #46, #136.
+
+    CRG_EMBED_WORKER=0/1 overrides the platform default (tests, debugging).
+    """
+    override = os.environ.get("CRG_EMBED_WORKER")
+    if override is not None:
+        return override.strip().lower() in ("1", "true", "yes")
+    return sys.platform == "win32"
+
+
+class _EmbedWorkerClient:
+    """Talks to an embed_worker subprocess over JSON-lines stdio.
+
+    One client (and thus one worker process) per model name, shared
+    process-wide via :func:`_get_worker_client`. All requests are serialized
+    by a lock; the first request blocks until the worker has finished loading
+    the model on its own main thread.
+    """
+
+    def __init__(
+        self,
+        model_name: str,
+        cmd: list[str] | None = None,
+        env: dict[str, str] | None = None,
+    ) -> None:
+        self._model_name = model_name
+        self._cmd = cmd or [
+            sys.executable, "-m", "code_review_graph.embed_worker",
+            "--model", model_name,
+        ]
+        self._env = env
+        self._lock = threading.Lock()
+        self._proc: subprocess.Popen | None = None
+        self._dimension: int | None = None
+        self._ready = False
+
+    def start(self) -> None:
+        """Spawn the worker without waiting for the model to load."""
+        with self._lock:
+            try:
+                self._spawn_locked()
+            except OSError as exc:
+                logger.warning("could not start embedding worker: %s", exc)
+
+    def _spawn_locked(self) -> None:
+        if self._proc is not None and self._proc.poll() is None:
+            return
+        # A foreign PYTHONHOME/PYTHONPATH (e.g. inherited from `uv run`)
+        # makes the child resolve a mismatched stdlib ("SRE module mismatch").
+        env = self._env if self._env is not None else {
+            k: v for k, v in os.environ.items()
+            if k not in ("PYTHONHOME", "PYTHONPATH")
+        }
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        self._proc = subprocess.Popen(
+            self._cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=None,  # inherit: worker logs land in the server's stderr
+            text=True,
+            encoding="utf-8",
+            env=env,
+            creationflags=creationflags,
+        )
+        self._ready = False
+
+    def _ensure_ready_locked(self) -> None:
+        self._spawn_locked()
+        if self._ready:
+            return
+        assert self._proc is not None and self._proc.stdout is not None
+        line = self._proc.stdout.readline()
+        if not line:
+            raise RuntimeError(
+                f"embedding worker exited during startup (code {self._proc.poll()})"
+            )
+        msg = json.loads(line)
+        if "error" in msg:
+            raise RuntimeError(f"embedding worker failed: {msg['error']}")
+        self._dimension = int(msg["dimension"])
+        self._ready = True
+
+    def _request_locked(self, payload: dict) -> dict:
+        assert self._proc is not None
+        assert self._proc.stdin is not None and self._proc.stdout is not None
+        self._proc.stdin.write(json.dumps(payload) + "\n")
+        self._proc.stdin.flush()
+        line = self._proc.stdout.readline()
+        if not line:
+            raise RuntimeError(
+                f"embedding worker exited (code {self._proc.poll()})"
+            )
+        msg = json.loads(line)
+        if "error" in msg:
+            raise RuntimeError(f"embedding worker error: {msg['error']}")
+        return msg
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        with self._lock:
+            was_ready = self._ready
+            try:
+                self._ensure_ready_locked()
+                return self._request_locked({"op": "embed", "texts": texts})["vectors"]
+            except (RuntimeError, OSError, ValueError) as exc:
+                if not was_ready:
+                    raise
+                # Worker died mid-session (e.g. OOM-killed) — respawn once.
+                logger.warning("embedding worker lost (%s), restarting", exc)
+                self._proc = None
+                self._ready = False
+                self._ensure_ready_locked()
+                return self._request_locked({"op": "embed", "texts": texts})["vectors"]
+
+    def dimension(self) -> int:
+        with self._lock:
+            self._ensure_ready_locked()
+            assert self._dimension is not None
+            return self._dimension
+
+
+_worker_clients: dict[str, _EmbedWorkerClient] = {}
+_worker_clients_lock = threading.Lock()
+
+
+def _get_worker_client(model_name: str) -> _EmbedWorkerClient:
+    with _worker_clients_lock:
+        client = _worker_clients.get(model_name)
+        if client is None:
+            client = _EmbedWorkerClient(model_name)
+            _worker_clients[model_name] = client
+        return client
+
+
+def start_embed_worker(model_name: str | None = None) -> None:
+    """Pre-spawn the embedding worker so the model loads while the server is idle.
+
+    Spawning a process is loader-lock-free and returns immediately; the model
+    load happens on the worker's main thread. Safe to call multiple times.
+    """
+    name = model_name or os.environ.get("CRG_EMBEDDING_MODEL", LOCAL_DEFAULT_MODEL)
+    _get_worker_client(name).start()
 
 
 class LocalEmbeddingProvider(EmbeddingProvider):
@@ -118,6 +262,8 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         return _local_model_cache[self._model_name]
 
     def embed(self, texts: list[str]) -> list[list[float]]:
+        if _use_worker_process():
+            return _get_worker_client(self._model_name).embed(texts)
         model = self._get_model()
         vectors = model.encode(texts, show_progress_bar=False)
         return [v.tolist() for v in vectors]
@@ -127,6 +273,8 @@ class LocalEmbeddingProvider(EmbeddingProvider):
 
     @property
     def dimension(self) -> int:
+        if _use_worker_process():
+            return _get_worker_client(self._model_name).dimension()
         model = self._get_model()
         return model.get_sentence_embedding_dimension()
 
@@ -813,13 +961,11 @@ class EmbeddingStore:
             to_embed.append((node, text, text_hash))
 
         if not to_embed:
-            # Warm the model even when there is nothing new to embed.
-            # On Windows, _embedding_search() gates vector search on
-            # _local_model_cache being populated (see search.py). Without this
-            # call, embed_graph_tool on an already-embedded graph leaves the
-            # cache empty and semantic search permanently falls back to FTS5.
-            # embed([]) calls _get_model() for the local provider (no-op for
-            # cloud providers whose embed() loops over an empty list). See: #46
+            # Warm the provider even when there is nothing new to embed, so
+            # the first semantic search doesn't pay the model-load latency.
+            # For the local provider this loads the model (in the worker
+            # process on Windows); cloud providers loop over an empty list,
+            # making it a no-op. See: #46
             self.provider.embed([])
             return 0
 
@@ -843,10 +989,8 @@ class EmbeddingStore:
         if not self.provider:
             return []
 
-        import numpy as np
-
         provider_name = self.provider.name
-        query_vec = np.array(self.provider.embed_query(query), dtype=np.float32)
+        query_list = self.provider.embed_query(query)
 
         rows = self._conn.execute(
             "SELECT qualified_name, vector FROM embeddings WHERE provider = ?",
@@ -856,6 +1000,25 @@ class EmbeddingStore:
         if not rows:
             return []
 
+        if _use_worker_process():
+            # Pure-Python scoring: importing numpy here would load C-extension
+            # DLLs inside an MCP thread-pool thread — the exact Loader-Lock
+            # deadlock the worker process exists to avoid. A few thousand
+            # 384-dim vectors score in well under a second without numpy.
+            ranked = sorted(
+                (
+                    (r["qualified_name"],
+                     _cosine_similarity(query_list, _decode_vector(r["vector"])))
+                    for r in rows
+                ),
+                key=lambda x: x[1],
+                reverse=True,
+            )
+            return ranked[:limit]
+
+        import numpy as np
+
+        query_vec = np.array(query_list, dtype=np.float32)
         qnames = [r["qualified_name"] for r in rows]
         matrix = np.frombuffer(
             b"".join(r["vector"] for r in rows),

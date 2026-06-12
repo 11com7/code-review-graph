@@ -348,10 +348,11 @@ async def embed_graph_tool(
     After running this, semantic_search_nodes_tool will use vector similarity
     instead of keyword matching for much better results.
 
-    Runs the blocking sentence-transformers / Gemini / HTTP inference in a
-    thread via ``asyncio.to_thread`` so the stdio event loop stays
-    responsive — without this wrapper, embedding a large graph would
-    silently hang the MCP server on Windows. See: #46, #136.
+    Runs the blocking embedding work in a thread via ``asyncio.to_thread``
+    so the stdio event loop stays responsive. On Windows the local model
+    runs in a dedicated worker process (see embeddings.embed_worker), so
+    this thread never loads C-extension DLLs and cannot hit the Windows
+    DLL Loader Lock deadlock. See: #46, #136.
 
     Args:
         repo_root: Repository root path. Auto-detected if omitted.
@@ -364,23 +365,6 @@ async def embed_graph_tool(
                   CRG_OPENAI_MODEL env vars and accepts any OpenAI-compatible
                   endpoint (real OpenAI, Azure, new-api, LiteLLM, vLLM, etc.).
     """
-    # On Windows, wait for the background pre-warm thread to finish loading
-    # PyTorch / sentence-transformers DLLs before handing off to
-    # asyncio.to_thread. Creating a new thread-pool worker while DLLs are
-    # being loaded concurrently triggers Windows DLL_THREAD_ATTACH callbacks,
-    # which stall on the OS DLL Loader Lock held by the pre-warm thread. This
-    # can delay worker creation by 10–60 s and exhaust MCP client timeouts
-    # (appearing as a "hang"). Polling on threading.Event with asyncio.sleep
-    # yields control to the event loop, keeping the server responsive for
-    # other tool calls during the wait. See: #46, #136
-    if sys.platform == "win32":
-        from .embeddings import _prewarm_done as _prewarm_done_event
-        _deadline = asyncio.get_event_loop().time() + 120
-        while not _prewarm_done_event.is_set():
-            if asyncio.get_event_loop().time() > _deadline:
-                logger.warning("embed_graph_tool: pre-warm did not complete within 120 s")
-                break
-            await asyncio.sleep(0.5)
     return await asyncio.to_thread(
         embed_graph,
         repo_root=_resolve_repo_root(repo_root),
@@ -981,7 +965,6 @@ def _apply_tool_filter(tools: str | None = None) -> None:
         CRG_TOOLS=query_graph_tool,semantic_search_nodes_tool
     """
     import asyncio
-    import os
 
     raw = tools or os.environ.get("CRG_TOOLS")
     if not raw:
@@ -1073,55 +1056,18 @@ def main(
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-    # Pre-warm the local embedding model in a daemon thread so the MCP server
-    # can respond to the client handshake immediately. Loading PyTorch /
-    # sentence-transformers takes 5–30 s and would block the stdio handshake
-    # long enough for MCP clients to time out before any tools are registered.
-    #
-    # Safety: _local_model_cache writes are serialized by _local_model_lock
-    # (see embeddings.py). If asyncio.to_thread calls _get_model() while the
-    # background thread is still loading it simply blocks on that lock — it
-    # never loads DLLs itself, which is the pattern that caused the original
-    # Windows deadlock. See: #46, #136
-    if sys.platform == "win32":
-        # Always pre-warm the local embedding model on Windows, regardless of
-        # whether CRG_EMBEDDING_MODEL is explicitly set. Without this, the first
-        # semantic search call triggers DLL loading inside asyncio.to_thread,
-        # which can deadlock: Windows holds the DLL Loader Lock during new-thread
-        # creation (DLL_THREAD_ATTACH), so if the thread pool needs to spawn a new
-        # worker while DLLs are being loaded concurrently, both sides wait forever.
-        # Pre-warming before asyncio starts avoids the race entirely. See: #46, #136
-        _prewarm_model = os.environ.get("CRG_EMBEDDING_MODEL")
-        # Use find_spec instead of a bare import so we don't pull in PyTorch on
-        # the main thread just to check availability. A real import takes 10–30 s
-        # on Windows (DLL loading) and would delay the MCP handshake long enough
-        # for clients to time out before the server registers any tools.
-        import importlib.util as _importlib_util
-        _st_available = _importlib_util.find_spec("sentence_transformers") is not None
-        if _st_available:
-            import threading as _threading
+        # On Windows the local embedding model runs in a dedicated worker
+        # process (see embeddings.embed_worker): importing torch/numpy from
+        # any non-main thread of this process deadlocks on the OS DLL Loader
+        # Lock, while spawning a process is loader-lock-free and instant.
+        # Use find_spec — a pure filesystem lookup, < 1 ms, no import side
+        # effects — to decide whether a local model can exist at all.
+        # See: #46, #136
+        import importlib.util as _ilu
 
-            from .embeddings import LOCAL_DEFAULT_MODEL as _DEFAULT_MODEL
-            from .embeddings import _prewarm_done as _prewarm_done_event
-
-            _prewarm_done_event.clear()
-
-            def _do_prewarm(model_name: str) -> None:
-                try:
-                    from .embeddings import LocalEmbeddingProvider
-                    LocalEmbeddingProvider(model_name=model_name)._get_model()
-                    logger.info("Pre-warmed embedding model: %s", model_name)
-                except Exception as exc:
-                    logger.warning("Could not pre-warm embedding model: %s", exc)
-                finally:
-                    _prewarm_done_event.set()
-
-            _threading.Thread(
-                target=_do_prewarm,
-                args=(_prewarm_model or _DEFAULT_MODEL,),
-                daemon=True,
-                name="crg-prewarm",
-            ).start()
+        if _ilu.find_spec("sentence_transformers") is not None:
+            from .embeddings import start_embed_worker
+            start_embed_worker()
 
     try:
         if transport == "stdio":
