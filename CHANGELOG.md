@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.3.6+11com7.4] - 2026-06-12
+
+### Added
+
+- **`/release` skill** (11com7): project-local Claude Code skill that automates the full fork release workflow — preflight checks (uncommitted changes, ruff lint, mypy, targeted tests, GitHub workflow audit), CHANGELOG completeness check with commit-diff, automatic fork counter increment (`+11com7.N+1`), three-file version sync (`pyproject.toml`, `__init__.py`, `uv.lock`), annotated tag, push, and GitHub release via `make_releases.py`. Supports `--dry-run` to preview all planned changes read-only without touching any file.
+- **mypy invocation fix** (11com7): mypy is not part of the dev extras and not installed in the local venv — `uv run mypy` failed with "program not found". Fixed by using `uv run --with mypy --with types-networkx mypy`, which matches how CI installs it (`pip install mypy types-networkx`) without requiring a permanent dev-dependency entry.
+
+---
+
 ## [2.3.6+11com7.3] - 2026-06-12
 
 ### Added
