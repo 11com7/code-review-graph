@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.6+11com7.6] - 2026-06-12
+
+### Added
+
+- **`--require-repo-root` flag for `serve`** (11com7): prevents silent empty-graph startup when the server is meant to index an external project (e.g. a documentation repo pointing at a source repo via `CRG_REPO_ROOT`). Without this flag, a missing env var causes SQLite to silently create a blank database in the current directory — all graph tools return empty results with no indication of misconfiguration. With the flag set, the server exits immediately with a clear message showing how to set `CRG_REPO_ROOT` on PowerShell and bash/zsh.
+
+---
+
 ## [2.3.6+11com7.5] - 2026-06-12
 
 ### Changed
