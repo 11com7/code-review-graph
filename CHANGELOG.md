@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.3.6+11com7.3] - 2026-06-12
+
+### Added
+
+- **Enriched embedding text per node** (11com7): natural-language semantic search ranked nodes poorly because only identifier metadata was embedded — `"Vortrag Stornierung Referent"` ranked `VortragsberichtFragebogen` far above the semantically correct `StorniertAbgesagtHandler`. New `_node_to_embedding_text()` wraps the upstream `_node_to_text()` (kept byte-identical for clean future merges) and appends discriminating context: decorators/attributes from `node.extra`, identifier-split trailing path segments, and a compact source excerpt of the definition (declaration line incl. `extends`, salient body strings; 12 lines / 400 chars cap — the MiniLM models truncate at ~128 tokens anyway). Measured with the production multilingual model on the real classes: correct handler 0.263 → 0.413, related guard 0.136 → 0.262, false positive 0.615 → 0.454. The `text_hash` comparison re-embeds all nodes automatically on the next `code-review-graph embed` run.
+
+### Fixed
+
+- **`_split_identifier` now splits acronym boundaries** (11com7): `HTTPServer` → `HTTP Server`, `XMLHttpRequest` → `XML Http Request`. Previously only lowercase→uppercase transitions were split, so acronym-prefixed names stayed single tokens.
+- **`semantic_search_nodes` labels its scores** (11com7): the response now carries `score_type: "rrf"` (or `"keyword"` for the fallback path). RRF scores are rank-based — `1/(60+rank+1)`, so even a perfect top hit caps at ~0.033 — and were repeatedly misread as poor cosine similarities.
+
 ## [2.3.6+11com7.2] - 2026-06-12
 
 ### Fixed

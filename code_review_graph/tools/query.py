@@ -449,6 +449,13 @@ def semantic_search_nodes(
         # results, hiding silent degradation to keyword-only search.
         search_mode = diagnostics.get("mode", "keyword")
 
+        # Fork (11com7): RRF scores are rank-based (1/(60+rank+1), so even a
+        # perfect top hit caps at ~0.033) — label them so clients don't read
+        # them as cosine similarities and conclude the matches are poor.
+        score_type = (
+            "rrf" if search_mode in ("hybrid", "fts", "vector") else "keyword"
+        )
+
         warning: str | None = None
         mismatch = diagnostics.get("embedding_mismatch")
         if mismatch:
@@ -479,6 +486,7 @@ def semantic_search_nodes(
                 "status": "ok",
                 "query": query,
                 "search_mode": search_mode,
+                "score_type": score_type,
                 "summary": summary,
                 "results": minimal_results,
             }
@@ -490,6 +498,7 @@ def semantic_search_nodes(
             "status": "ok",
             "query": query,
             "search_mode": search_mode,
+            "score_type": score_type,
             "summary": summary,
             "results": results,
         }

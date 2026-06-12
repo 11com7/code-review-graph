@@ -1602,6 +1602,22 @@ class TestSemanticSearchHonestMode:
         assert result["results"]
         assert result["search_mode"] == "fts"
 
+    def test_score_type_labels_rrf_scores(self):
+        """Fork (11com7): RRF scores cap at ~0.033 by construction — the
+        response must label them so clients don't read them as cosine
+        similarities."""
+        from code_review_graph.tools.query import semantic_search_nodes
+
+        result = semantic_search_nodes(
+            "authenticate", repo_root=str(self.root),
+        )
+        assert result["score_type"] == "rrf"
+
+        minimal = semantic_search_nodes(
+            "authenticate", repo_root=str(self.root), detail_level="minimal",
+        )
+        assert minimal["score_type"] == "rrf"
+
     def test_warning_on_provider_model_mismatch(self):
         from unittest.mock import MagicMock, patch
 

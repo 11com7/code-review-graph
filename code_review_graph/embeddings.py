@@ -960,9 +960,11 @@ def _split_identifier(name: str) -> str:
     """
     if not name:
         return ""
-    # Insert space between lowercase->uppercase transitions, then collapse
-    # snake_case / dotted / hyphenated separators.
-    spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", name)
+    # Acronym boundary first (HTTPServer -> HTTP Server), then insert space
+    # between lowercase->uppercase transitions, then collapse snake_case /
+    # dotted / hyphenated separators.
+    spaced = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", name)
+    spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", spaced)
     spaced = re.sub(r"[_./\-]+", " ", spaced)
     return " ".join(spaced.split())
 
@@ -1021,6 +1023,104 @@ def _node_to_text(node: GraphNode) -> str:
     return " ".join(parts)
 
 
+# ---------------------------------------------------------------------------
+# Fork (11com7): enriched embedding text
+#
+# Name-only embeddings carry too little signal for natural-language queries:
+# "Vortrag Stornierung Referent" ranks `VortragsberichtFragebogen` above
+# `StorniertAbgesagtHandler` because the discriminating context (path,
+# parent class, attributes, body strings) never reaches the vector. These
+# helpers wrap the upstream `_node_to_text` (kept byte-identical above so
+# upstream merges stay clean) and append that context. The `text_hash`
+# comparison in `embed_nodes` automatically re-embeds every node once this
+# representation changes.
+# ---------------------------------------------------------------------------
+
+_EXCERPT_MAX_LINES = 12  # lines of source per node
+_EXCERPT_MAX_CHARS = 400  # hard cap; MiniLM truncates at ~128 tokens anyway
+_PATH_SEGMENT_COUNT = 4  # trailing directory segments to include
+
+
+def _node_body_excerpt(node: GraphNode, base_dir: Path | None = None) -> str:
+    """Return a compact source excerpt for *node*, or "" when unavailable.
+
+    Reads the first ``_EXCERPT_MAX_LINES`` lines of the node's definition
+    (bounded by ``line_end``) and collapses them to a single whitespace-
+    normalised string capped at ``_EXCERPT_MAX_CHARS``. The class/function
+    declaration line is included, so ``extends``/``implements`` context
+    comes for free. Missing or unreadable files degrade silently — the
+    embedding then simply contains the metadata-only text.
+    """
+    file_path = getattr(node, "file_path", None)
+    line_start = getattr(node, "line_start", 0) or 0
+    if not file_path or line_start <= 0:
+        return ""
+    path = Path(file_path)
+    if not path.is_absolute():
+        if base_dir is None:
+            return ""
+        path = base_dir / path
+    try:
+        if not path.is_file():
+            return ""
+        raw = path.read_bytes()
+    except OSError:
+        return ""
+    lines = raw.decode("utf-8", errors="replace").splitlines()
+    start = line_start - 1
+    if start >= len(lines):
+        return ""
+    line_end = getattr(node, "line_end", 0) or (start + 1)
+    end = min(len(lines), max(line_end, start + 1), start + _EXCERPT_MAX_LINES)
+    pieces: list[str] = []
+    for line in lines[start:end]:
+        stripped = line.strip().strip("{}").strip()
+        if stripped:
+            pieces.append(stripped)
+    excerpt = " ".join(" ".join(pieces).split())
+    return excerpt[:_EXCERPT_MAX_CHARS]
+
+
+def _node_to_embedding_text(node: GraphNode, base_dir: Path | None = None) -> str:
+    """Upstream ``_node_to_text`` plus fork enrichment.
+
+    Appends, in order of discriminating power (the model truncates long
+    input, so the strongest signals go first):
+
+    * decorators / attributes persisted in ``node.extra`` (e.g.
+      ``HandlesAktion(VortragsEditorAktion::ABSAGEN)``),
+    * the trailing directory segments of the file path, identifier-split
+      (``Vortragseditor Handler Aktualisieren``),
+    * a source excerpt of the definition (declaration line, salient body
+      strings — see :func:`_node_body_excerpt`).
+    """
+    parts = [_node_to_text(node)]
+
+    extra = getattr(node, "extra", None) or {}
+    decorators = extra.get("decorators") or []
+    if decorators:
+        deco = " ".join(str(d) for d in decorators[:5])
+        parts.append(deco)
+        deco_split = _split_identifier(deco)
+        if deco_split and deco_split.lower() != deco.lower():
+            parts.append(deco_split)
+
+    file_path = getattr(node, "file_path", "") or ""
+    if file_path:
+        segments = [
+            s for s in Path(file_path).parent.parts[-_PATH_SEGMENT_COUNT:]
+            if s not in (".", "..", "/", "src", "lib", "app") and ":" not in s
+        ]
+        if segments:
+            parts.append(_split_identifier(" ".join(segments)))
+
+    excerpt = _node_body_excerpt(node, base_dir=base_dir)
+    if excerpt:
+        parts.append(excerpt)
+
+    return " ".join(p for p in parts if p)
+
+
 class EmbeddingStore:
     """Manages vector embeddings for graph nodes in SQLite."""
 
@@ -1068,11 +1168,14 @@ class EmbeddingStore:
         # Filter to nodes that need embedding
         to_embed: list[tuple[GraphNode, str, str]] = []
         provider_name = self.provider.name
+        # Fork (11com7): repo root for resolving relative node paths when
+        # building source excerpts (db lives at <root>/.code-review-graph/).
+        base_dir = self.db_path.parent.parent if self.db_path.name else None
 
         for node in nodes:
             if node.kind == "File":
                 continue
-            text = _node_to_text(node)
+            text = _node_to_embedding_text(node, base_dir=base_dir)
             text_hash = hashlib.sha256(text.encode()).hexdigest()
 
             existing = self._conn.execute(

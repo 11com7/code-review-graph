@@ -17,7 +17,10 @@ from code_review_graph.embeddings import (
     _decode_vector,
     _encode_vector,
     _is_localhost_url,
+    _node_body_excerpt,
+    _node_to_embedding_text,
     _node_to_text,
+    _split_identifier,
     get_provider,
 )
 from code_review_graph.graph import GraphNode
@@ -104,6 +107,100 @@ class TestNodeToText:
         text = _node_to_text(node)
         # File kind should not add "file" as a kind label
         assert "file.py" in text
+
+
+class TestSplitIdentifier:
+    def test_acronym_boundary(self):
+        assert _split_identifier("HTTPServer") == "HTTP Server"
+        assert _split_identifier("XMLHttpRequest") == "XML Http Request"
+        assert _split_identifier("parseJSONResponse") == "parse JSON Response"
+
+    def test_existing_forms_unchanged(self):
+        assert _split_identifier("get_route_handler") == "get route handler"
+        assert _split_identifier("APIRoute") == "API Route"
+        assert (
+            _split_identifier("StorniertAbgesagtHandler")
+            == "Storniert Abgesagt Handler"
+        )
+
+
+class TestNodeToEmbeddingText:
+    """Fork (11com7): enriched embedding text — path segments, decorators,
+    and a source excerpt are appended to the upstream representation."""
+
+    def _make_node(self, **kwargs):
+        defaults = dict(
+            id=1, kind="Class", name="StorniertAbgesagtHandler",
+            qualified_name="x.php::StorniertAbgesagtHandler", file_path="x.php",
+            line_start=1, line_end=10, language="php",
+            parent_name=None, params=None, return_type=None,
+            is_test=False, file_hash=None, extra={},
+        )
+        defaults.update(kwargs)
+        return GraphNode(**defaults)
+
+    def test_includes_upstream_text_and_path_segments(self, tmp_path):
+        node = self._make_node(
+            file_path="Vortragseditor/Handler/Aktualisieren/X.php",
+        )
+        text = _node_to_embedding_text(node)
+        # Upstream parts (name + split form) survive
+        assert "StorniertAbgesagtHandler" in text
+        assert "Storniert Abgesagt Handler" in text
+        # Fork part: trailing directory segments
+        assert "Vortragseditor" in text
+        assert "Aktualisieren" in text
+
+    def test_body_excerpt_from_real_file(self, tmp_path):
+        src = tmp_path / "Handler.php"
+        src.write_text(
+            "<?php\n"
+            "final class StorniertAbgesagtHandler extends "
+            "AbstractVortragUpdateHandler\n"
+            "{\n"
+            "    public function getSuccessMessage(): string\n"
+            "    {\n"
+            "        return 'Vortrag erfolgreich storniert, abgesagt';\n"
+            "    }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        node = self._make_node(file_path=str(src), line_start=2, line_end=8)
+        text = _node_to_embedding_text(node)
+        # Declaration line gives extends context for free
+        assert "AbstractVortragUpdateHandler" in text
+        # Salient body string reaches the embedding
+        assert "storniert, abgesagt" in text
+
+    def test_excerpt_is_capped(self, tmp_path):
+        src = tmp_path / "big.php"
+        src.write_text("x = 1\n" * 500, encoding="utf-8")
+        node = self._make_node(file_path=str(src), line_start=1, line_end=500)
+        excerpt = _node_body_excerpt(node)
+        assert len(excerpt) <= 400
+
+    def test_missing_file_degrades_to_metadata_text(self):
+        node = self._make_node(file_path="does/not/exist.php")
+        text = _node_to_embedding_text(node)
+        assert "StorniertAbgesagtHandler" in text  # no crash, base text kept
+
+    def test_relative_path_resolved_via_base_dir(self, tmp_path):
+        src = tmp_path / "sub" / "Thing.php"
+        src.parent.mkdir()
+        src.write_text("class Thing extends Base {}\n", encoding="utf-8")
+        node = self._make_node(
+            file_path="sub/Thing.php", line_start=1, line_end=1,
+        )
+        assert "extends Base" in _node_body_excerpt(node, base_dir=tmp_path)
+        # Without base_dir a relative path cannot be resolved -> no excerpt
+        assert _node_body_excerpt(node) == ""
+
+    def test_decorators_from_extra_are_included(self):
+        node = self._make_node(
+            extra={"decorators": ["HandlesAktion(VortragsEditorAktion::ABSAGEN)"]},
+        )
+        text = _node_to_embedding_text(node)
+        assert "HandlesAktion" in text
 
 
 class TestEmbeddingStore:
