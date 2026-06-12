@@ -21,6 +21,7 @@ from code_review_graph.embeddings import (
     _node_to_embedding_text,
     _node_to_text,
     _split_identifier,
+    apply_project_mcp_env,
     get_provider,
 )
 from code_review_graph.graph import GraphNode
@@ -305,6 +306,70 @@ class TestLocalEmbeddingProviderModelName:
             provider = LocalEmbeddingProvider()
             assert provider._model_name == "BAAI/bge-small-en-v1.5"
             assert provider.name == "local:BAAI/bge-small-en-v1.5"
+
+
+class TestForkDefaultModel:
+    """11com7 fork: the local default must stay multilingual across merges."""
+
+    def test_default_is_multilingual(self):
+        assert LOCAL_DEFAULT_MODEL == "paraphrase-multilingual-MiniLM-L12-v2"
+
+
+class TestApplyProjectMcpEnv:
+    """11com7 fork: CRG_* env entries from .mcp.json reach CLI runs."""
+
+    def _write_mcp_json(self, tmp_path, env):
+        config = {"mcpServers": {"code-review-graph": {"env": env}}}
+        (tmp_path / ".mcp.json").write_text(json.dumps(config), encoding="utf-8")
+
+    def test_sets_model_from_mcp_json(self, tmp_path):
+        self._write_mcp_json(tmp_path, {"CRG_EMBEDDING_MODEL": "my/model"})
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CRG_EMBEDDING_MODEL", None)
+            apply_project_mcp_env(tmp_path)
+            assert os.environ["CRG_EMBEDDING_MODEL"] == "my/model"
+
+    def test_process_env_wins(self, tmp_path):
+        self._write_mcp_json(tmp_path, {"CRG_EMBEDDING_MODEL": "from-mcp-json"})
+        with patch.dict(os.environ, {"CRG_EMBEDDING_MODEL": "from-process-env"}):
+            apply_project_mcp_env(tmp_path)
+            assert os.environ["CRG_EMBEDDING_MODEL"] == "from-process-env"
+
+    def test_non_crg_keys_ignored(self, tmp_path):
+        self._write_mcp_json(
+            tmp_path, {"PATH": "evil", "HOME": "evil", "CRG_GIT_TIMEOUT": "60"}
+        )
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CRG_GIT_TIMEOUT", None)
+            original_path = os.environ.get("PATH")
+            apply_project_mcp_env(tmp_path)
+            assert os.environ.get("PATH") == original_path
+            assert os.environ["CRG_GIT_TIMEOUT"] == "60"
+
+    def test_missing_file_is_noop(self, tmp_path):
+        apply_project_mcp_env(tmp_path)  # must not raise
+
+    def test_invalid_json_is_noop(self, tmp_path):
+        (tmp_path / ".mcp.json").write_text("{not json", encoding="utf-8")
+        apply_project_mcp_env(tmp_path)  # must not raise
+
+    def test_missing_env_block_is_noop(self, tmp_path):
+        config = {"mcpServers": {"code-review-graph": {"command": "crg"}}}
+        (tmp_path / ".mcp.json").write_text(json.dumps(config), encoding="utf-8")
+        apply_project_mcp_env(tmp_path)  # must not raise
+
+    def test_non_dict_structures_are_noop(self, tmp_path):
+        (tmp_path / ".mcp.json").write_text(
+            json.dumps({"mcpServers": "oops"}), encoding="utf-8"
+        )
+        apply_project_mcp_env(tmp_path)  # must not raise
+
+    def test_non_string_values_ignored(self, tmp_path):
+        self._write_mcp_json(tmp_path, {"CRG_EMBEDDING_MODEL": 42})
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CRG_EMBEDDING_MODEL", None)
+            apply_project_mcp_env(tmp_path)
+            assert "CRG_EMBEDDING_MODEL" not in os.environ
 
 
 class TestGetProviderValidation:

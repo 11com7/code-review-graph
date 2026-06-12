@@ -66,7 +66,10 @@ class EmbeddingProvider(ABC):
         pass
 
 
-LOCAL_DEFAULT_MODEL = "all-MiniLM-L6-v2"
+# 11com7 fork: multilingual default (upstream uses the English-only
+# all-MiniLM-L6-v2). Our codebases carry German docstrings and comments,
+# so semantic search needs a multilingual embedding space by default.
+LOCAL_DEFAULT_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
 
 # Process-level model cache: keeps SentenceTransformer objects alive across
 # EmbeddingStore instances. Without this, every MCP tool call that creates a
@@ -815,7 +818,8 @@ def get_provider(
                   unless ``CRG_ACCEPT_CLOUD_EMBEDDINGS=1`` is set. See: #174
         model: Model name/path to use. For local provider this is any
                sentence-transformers compatible model. Falls back to
-               CRG_EMBEDDING_MODEL env var, then to all-MiniLM-L6-v2.
+               CRG_EMBEDDING_MODEL env var, then to
+               paraphrase-multilingual-MiniLM-L12-v2.
                For Google provider this is a Gemini model ID.
                For OpenAI provider this overrides CRG_OPENAI_MODEL.
 
@@ -1318,3 +1322,44 @@ def semantic_search(
     # Fallback to keyword search
     nodes = graph_store.search_nodes(query, limit=limit)
     return [node_to_dict(n) for n in nodes]
+
+
+def apply_project_mcp_env(repo_root: Path) -> None:
+    """Adopt CRG_* env entries from the project's ``.mcp.json`` (11com7 fork).
+
+    MCP clients launch the server with the ``env`` block from ``.mcp.json``,
+    but a manual CLI run (e.g. ``code-review-graph embed``) never sees those
+    values and silently falls back to the default model — producing vectors
+    that mismatch the ones the MCP server queries against.
+
+    Reads ``<repo_root>/.mcp.json``, extracts
+    ``mcpServers["code-review-graph"].env`` and applies every ``CRG_*`` key
+    via :func:`os.environ.setdefault`. Real process environment variables and
+    explicit CLI flags therefore always win; the resulting precedence is:
+    ``--model`` > process env > ``.mcp.json`` env > ``LOCAL_DEFAULT_MODEL``.
+
+    Missing file, missing keys, or a non-dict structure are silent no-ops;
+    invalid JSON only logs a warning.
+    """
+    mcp_json = Path(repo_root) / ".mcp.json"
+    if not mcp_json.is_file():
+        return
+    try:
+        config = json.loads(mcp_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        logger.warning("Could not read %s: %s", mcp_json, exc)
+        return
+    if not isinstance(config, dict):
+        return
+    server = config.get("mcpServers", {})
+    if not isinstance(server, dict):
+        return
+    env = server.get("code-review-graph", {})
+    if not isinstance(env, dict):
+        return
+    env = env.get("env", {})
+    if not isinstance(env, dict):
+        return
+    for key, value in env.items():
+        if isinstance(key, str) and key.startswith("CRG_") and isinstance(value, str):
+            os.environ.setdefault(key, value)

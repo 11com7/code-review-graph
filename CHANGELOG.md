@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.3.6+11com7.5] - 2026-06-12
+
+### Changed
+
+- **Multilingual default embedding model** (11com7): the local provider now defaults to `paraphrase-multilingual-MiniLM-L12-v2` instead of upstream's English-only `all-MiniLM-L6-v2`. Our codebases carry German docstrings, comments, and identifiers, so semantic search needs a multilingual embedding space out of the box. Databases embedded with the old default will report an `embedding_mismatch` and need a one-time `code-review-graph embed` re-run.
+
+### Added
+
+- **`.mcp.json` env resolution for CLI runs** (11com7): `code-review-graph embed` (and a manual `serve` start) now adopt `CRG_*` entries from the `env` block of the project's `.mcp.json` (`mcpServers["code-review-graph"].env`) via `os.environ.setdefault`. Previously only MCP clients applied that block, so a manual `embed` run silently fell back to the default model and produced vectors that mismatched what the server queries against. Precedence: `--model` flag > process environment > `.mcp.json` env > built-in default.
+
+---
+
 ## [2.3.6+11com7.4] - 2026-06-12
 
 ### Added

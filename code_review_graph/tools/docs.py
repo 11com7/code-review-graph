@@ -26,7 +26,7 @@ def embed_graph(
 
     Requires: ``pip install code-review-graph[embeddings]`` (local provider only;
     cloud providers like ``openai`` / ``google`` / ``minimax`` use stdlib ``urllib``).
-    Default model: all-MiniLM-L6-v2. Override via ``model`` param or
+    Default model: paraphrase-multilingual-MiniLM-L12-v2. Override via ``model`` param or
     CRG_EMBEDDING_MODEL env var.
     Changing the model or provider re-embeds all nodes automatically.
 

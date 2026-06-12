@@ -503,7 +503,7 @@ uv tool install "git+https://github.com/11com7/code-review-graph.git[all]"      
 |----------|-------------|---------|
 | `CRG_GIT_TIMEOUT` | Timeout in seconds for Git operations | `30` |
 | `CRG_DATA_DIR` | Override directory for graph databases and generated graph artefacts | - |
-| `CRG_EMBEDDING_MODEL` | Default model for vector embeddings | `all-MiniLM-L6-v2` |
+| `CRG_EMBEDDING_MODEL` | Default model for vector embeddings (also read from the `env` block of the project's `.mcp.json` when the process env is unset) | `paraphrase-multilingual-MiniLM-L12-v2` |
 | `CRG_ACCEPT_CLOUD_EMBEDDINGS` | Suppress the cloud embedding egress warning after explicit acknowledgement | - |
 | `CRG_ALLOW_REMOTE_CODE` | Allow HuggingFace models that require `trust_remote_code=True` | `0` |
 | `CRG_MAX_IMPACT_NODES` | Maximum nodes to include in impact analysis | `500` |

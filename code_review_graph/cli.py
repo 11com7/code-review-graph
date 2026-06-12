@@ -822,7 +822,15 @@ def main() -> None:
         return
 
     if args.command in ("serve", "mcp"):
+        from .embeddings import apply_project_mcp_env
+        from .incremental import find_repo_root
         from .main import main as serve_main
+
+        # 11com7 fork: a manual `serve` start (outside an MCP client) does
+        # not inherit the env block from .mcp.json — apply it here. No-op
+        # when the client already set the variables (setdefault semantics).
+        _serve_root = Path(args.repo) if args.repo else find_repo_root()
+        apply_project_mcp_env(_serve_root or Path.cwd())
 
         auto_watch = getattr(args, "auto_watch", False)
         if args.command == "serve":
@@ -1215,8 +1223,11 @@ def main() -> None:
                     print("Open in browser to explore.")
 
         elif args.command == "embed":
-            from .embeddings import EmbeddingStore
+            from .embeddings import EmbeddingStore, apply_project_mcp_env
 
+            # 11com7 fork: honour the model configured in the project's
+            # .mcp.json so manual embed runs match what the MCP server uses.
+            apply_project_mcp_env(repo_root)
             emb_store = EmbeddingStore(
                 db_path, provider=args.provider, model=args.model,
             )
