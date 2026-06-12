@@ -727,6 +727,20 @@ def main() -> None:
         metavar="PORT",
         help="Port for --http (default: 5555)",
     )
+    serve_cmd.add_argument(
+        "--require-repo-root",
+        action="store_true",
+        # 11com7 fork: prevents silent empty-graph startup when the server is
+        # meant to index a different project (e.g. a doc repo pointing at a
+        # source repo via CRG_REPO_ROOT). Without this flag a missing env var
+        # causes SQLite to silently create a blank database in the doc repo.
+        help=(
+            "Abort startup if the repository root cannot be resolved from "
+            "--repo or the CRG_REPO_ROOT environment variable. "
+            "Prevents silent empty-graph operation when the server is "
+            "expected to use an external project."
+        ),
+    )
 
     mcp_cmd = sub.add_parser("mcp", help="Alias for serve")
     mcp_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
@@ -831,6 +845,21 @@ def main() -> None:
         # when the client already set the variables (setdefault semantics).
         _serve_root = Path(args.repo) if args.repo else find_repo_root()
         apply_project_mcp_env(_serve_root or Path.cwd())
+
+        # 11com7 fork: --require-repo-root aborts when neither --repo nor
+        # CRG_REPO_ROOT resolves to an explicit root. Prevents silent
+        # empty-graph operation in doc/secondary projects that rely on an
+        # external source repo being configured via the env var.
+        if getattr(args, "require_repo_root", False):
+            _explicit_root = args.repo or os.environ.get("CRG_REPO_ROOT", "").strip()
+            if not _explicit_root:
+                sys.exit(
+                    "error: --require-repo-root is set but neither --repo nor "
+                    "CRG_REPO_ROOT is defined.\n"
+                    "Set CRG_REPO_ROOT to the path of the source repository, e.g.:\n"
+                    "  $env:CRG_REPO_ROOT = 'C:\\path\\to\\vortragsservice-dev'  # PowerShell\n"
+                    "  export CRG_REPO_ROOT='/path/to/vortragsservice-dev'        # bash/zsh"
+                )
 
         auto_watch = getattr(args, "auto_watch", False)
         if args.command == "serve":
