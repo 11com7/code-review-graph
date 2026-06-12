@@ -896,12 +896,17 @@ def get_provider(
 
 
 def _check_available() -> bool:
-    """Check whether local embedding support is available."""
-    try:
-        import sentence_transformers  # noqa: F401
-        return True
-    except ImportError:
-        return False
+    """Check whether local embedding support is available.
+
+    Uses ``find_spec`` (a pure filesystem lookup) instead of importing
+    ``sentence_transformers``: the real import pulls in the torch/numpy C
+    extensions, which deadlocks on the Windows DLL Loader Lock when it
+    happens on a non-main thread (e.g. the MCP executor thread running a
+    tool call). See :func:`_use_worker_process`, #46, #136.
+    """
+    import importlib.util
+
+    return importlib.util.find_spec("sentence_transformers") is not None
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.3.6+11com7.2] - 2026-06-12
+
+### Fixed
+
+- **Windows: `embed_graph` tool hang reintroduced by upstream's provider availability check** (11com7): upstream 2.3.4 (`42dd2c9`) added `_check_available()` to `get_provider()`, which does a real `import sentence_transformers` to report unavailable local embeddings. On the MCP tool-call path this import runs on an executor thread and pulls in the torch/numpy C extensions — the exact Windows DLL Loader Lock deadlock the fork's `embed_worker` architecture exists to avoid. Reproduced 2/2 HANG with the MCP harness after the v2.3.6 merge; py-spy showed the `asyncio_0` thread frozen in `numpy._core.multiarray` under `_check_available`. Fixed by switching the check to `importlib.util.find_spec()` (pure filesystem lookup, no import side effects). Verified 3/3 OK: handshake ~1 s, embed 5–20 s, vector search immediately afterwards.
+
 ## [2.3.6+11com7.1] - 2026-06-12
 
 ### Changed
