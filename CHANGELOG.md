@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.3.6+11com7.7] - 2026-06-15
 
 ### Added
 
