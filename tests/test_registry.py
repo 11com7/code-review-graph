@@ -135,6 +135,51 @@ class TestRegistry:
         result = resolve_repo(self.registry, None)
         assert result is None
 
+    def test_prune_removes_missing_paths(self):
+        """prune() removes entries whose paths no longer exist."""
+        self.registry.register(str(self.repo1), alias="r1")
+        self.registry.register(str(self.repo2), alias="r2")
+
+        import shutil
+        shutil.rmtree(str(self.repo1))
+
+        removed = self.registry.prune()
+
+        assert len(removed) == 1
+        assert removed[0]["path"] == str(self.repo1.resolve())
+        assert len(self.registry.list_repos()) == 1
+        assert self.registry.list_repos()[0]["path"] == str(self.repo2.resolve())
+
+    def test_prune_dry_run_does_not_modify(self):
+        """prune(dry_run=True) reports stale entries without removing them."""
+        self.registry.register(str(self.repo1), alias="r1")
+        self.registry.register(str(self.repo2), alias="r2")
+
+        import shutil
+        shutil.rmtree(str(self.repo1))
+
+        removed = self.registry.prune(dry_run=True)
+
+        assert len(removed) == 1
+        assert removed[0]["alias"] == "r1"
+        # Registry unchanged
+        assert len(self.registry.list_repos()) == 2
+
+    def test_prune_nothing_to_remove(self):
+        """prune() returns empty list when all paths exist."""
+        self.registry.register(str(self.repo1), alias="r1")
+        self.registry.register(str(self.repo2), alias="r2")
+
+        removed = self.registry.prune()
+
+        assert removed == []
+        assert len(self.registry.list_repos()) == 2
+
+    def test_prune_empty_registry(self):
+        """prune() on an empty registry returns empty list."""
+        removed = self.registry.prune()
+        assert removed == []
+
 
 class TestConnectionPool:
     def setup_method(self):

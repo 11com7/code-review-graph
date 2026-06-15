@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **`prune` CLI command** (11com7): removes registry entries whose paths no longer exist on disk (`code-review-graph prune`). Supports `--dry-run` to preview stale entries without touching the registry file. Useful after deleting or moving repositories that were registered via `code-review-graph register`.
+- **`CRG_REGISTRY` environment variable** (11com7): overrides the default registry path (`~/.code-review-graph/registry.json`). Intended for cross-project setups where a secondary project (e.g. a documentation repo) needs to point at the registry of a different project's graph data — without touching the global default. Also used for test isolation as a side effect.
+
+### Fixed
+
+- **Test isolation: `TestDataDirRegistry` wrote into real user registry** (11com7): three tests in `tests/test_incremental.py` called `Registry()` without a path, causing every pytest run to append temp-directory entries to `~/.code-review-graph/registry.json`. After 31 runs this accumulated 93 stale entries, making `code-review-graph repos` and `list_repos_tool` output unreliable. Fixed by setting `CRG_REGISTRY` via `monkeypatch` in the affected tests.
+
+---
+
 ## [2.3.6+11com7.6] - 2026-06-12
 
 ### Added

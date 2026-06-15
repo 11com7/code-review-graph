@@ -475,3 +475,70 @@ class TestDetectChangesEndToEnd:
         savings = result["context_savings"]
         assert result["changed_functions"]
         assert savings["saved_percent"] < 100
+
+
+class TestPruneCLI:
+    """Tests for `code-review-graph prune` CLI command."""
+
+    def test_prune_nothing_to_do(self, tmp_path, monkeypatch, capsys):
+        """prune with all paths intact prints 'Nothing to prune.'"""
+        import shutil
+
+        from code_review_graph.registry import Registry
+
+        registry_file = tmp_path / "registry.json"
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        Registry(path=registry_file).register(str(repo), alias="r1")
+
+        monkeypatch.setenv("CRG_REGISTRY", str(registry_file))
+        with patch.object(sys, "argv", ["code-review-graph", "prune"]):
+            cli.main()
+
+        out = capsys.readouterr().out
+        assert "Nothing to prune" in out
+
+    def test_prune_removes_stale_entry(self, tmp_path, monkeypatch, capsys):
+        """prune removes entries whose paths no longer exist and prints them."""
+        import shutil
+
+        from code_review_graph.registry import Registry
+
+        registry_file = tmp_path / "registry.json"
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        Registry(path=registry_file).register(str(repo), alias="gone")
+        shutil.rmtree(str(repo))
+
+        monkeypatch.setenv("CRG_REGISTRY", str(registry_file))
+        with patch.object(sys, "argv", ["code-review-graph", "prune"]):
+            cli.main()
+
+        out = capsys.readouterr().out
+        assert "Removed 1 stale entry" in out
+        assert "gone" in out
+        assert Registry(path=registry_file).list_repos() == []
+
+    def test_prune_dry_run_does_not_remove(self, tmp_path, monkeypatch, capsys):
+        """prune --dry-run reports stale entries without modifying the registry."""
+        import shutil
+
+        from code_review_graph.registry import Registry
+
+        registry_file = tmp_path / "registry.json"
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        Registry(path=registry_file).register(str(repo), alias="gone")
+        shutil.rmtree(str(repo))
+
+        monkeypatch.setenv("CRG_REGISTRY", str(registry_file))
+        with patch.object(sys, "argv", ["code-review-graph", "prune", "--dry-run"]):
+            cli.main()
+
+        out = capsys.readouterr().out
+        assert "Would remove 1 stale entry" in out
+        assert "Run without --dry-run" in out
+        assert len(Registry(path=registry_file).list_repos()) == 1

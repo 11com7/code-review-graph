@@ -652,6 +652,16 @@ def main() -> None:
     # repos
     sub.add_parser("repos", help="List registered repositories")
 
+    # prune
+    prune_cmd = sub.add_parser(
+        "prune", help="Remove registry entries whose paths no longer exist"
+    )
+    prune_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show stale entries without removing them",
+    )
+
     # eval
     eval_cmd = sub.add_parser("eval", help="Run evaluation benchmarks")
     eval_cmd.add_argument(
@@ -954,7 +964,7 @@ def main() -> None:
         _handle_init(args)
         return
 
-    if args.command in ("register", "unregister", "repos"):
+    if args.command in ("register", "unregister", "repos", "prune"):
         logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
         from .registry import Registry
 
@@ -980,6 +990,24 @@ def main() -> None:
                 print("Use: code-review-graph register <path> [--alias name]")
             else:
                 for entry in repos:
+                    alias = entry.get("alias", "")
+                    alias_str = f"  ({alias})" if alias else ""
+                    print(f"  {entry['path']}{alias_str}")
+        elif args.command == "prune":
+            dry_run = getattr(args, "dry_run", False)
+            stale = registry.prune(dry_run=dry_run)
+            if not stale:
+                print("Nothing to prune.")
+            elif dry_run:
+                print(f"Would remove {len(stale)} stale entr{'y' if len(stale) == 1 else 'ies'}:")
+                for entry in stale:
+                    alias = entry.get("alias", "")
+                    alias_str = f"  ({alias})" if alias else ""
+                    print(f"  {entry['path']}{alias_str}")
+                print("Run without --dry-run to remove.")
+            else:
+                print(f"Removed {len(stale)} stale entr{'y' if len(stale) == 1 else 'ies'}:")
+                for entry in stale:
                     alias = entry.get("alias", "")
                     alias_str = f"  ({alias})" if alias else ""
                     print(f"  {entry['path']}{alias_str}")

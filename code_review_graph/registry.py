@@ -26,7 +26,9 @@ class Registry:
 
     Each entry stores the repo path and an optional alias.
     The registry lives at ``~/.code-review-graph/registry.json`` by default.
-    Set ``CRG_REGISTRY`` to override the path (useful in tests or CI).
+    Set ``CRG_REGISTRY`` to point at a different registry file — useful when
+    a secondary project (e.g. a documentation repo) needs to read the registry
+    of another project's graph data instead of the global default.
     """
 
     def __init__(self, path: Path | None = None) -> None:
@@ -114,6 +116,23 @@ class Registry:
             self._repos.append(new_entry)
             self._save()
             return new_entry
+
+    def prune(self, dry_run: bool = False) -> list[dict[str, str]]:
+        """Remove registry entries whose paths no longer exist on disk.
+
+        Args:
+            dry_run: If True, return stale entries without removing them.
+
+        Returns:
+            List of entries that were (or would be) removed.
+        """
+        with self._lock:
+            stale = [entry for entry in self._repos if not Path(entry["path"]).is_dir()]
+            if not dry_run and stale:
+                stale_paths = {entry["path"] for entry in stale}
+                self._repos = [e for e in self._repos if e["path"] not in stale_paths]
+                self._save()
+            return stale
 
     def unregister(self, path_or_alias: str) -> bool:
         """Remove a repository by path or alias.
