@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import threading
 from collections import OrderedDict
@@ -24,11 +25,16 @@ class Registry:
     """Manages a JSON-based registry of code-review-graph repositories.
 
     Each entry stores the repo path and an optional alias.
-    The registry lives at ``~/.code-review-graph/registry.json``.
+    The registry lives at ``~/.code-review-graph/registry.json`` by default.
+    Set ``CRG_REGISTRY`` to override the path (useful in tests or CI).
     """
 
     def __init__(self, path: Path | None = None) -> None:
-        self._path = path or _REGISTRY_PATH
+        if path is not None:
+            self._path = path
+        else:
+            env_path = os.environ.get("CRG_REGISTRY", "").strip()
+            self._path = Path(env_path) if env_path else _REGISTRY_PATH
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._repos: list[dict[str, str]] = []

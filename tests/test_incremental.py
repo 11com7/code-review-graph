@@ -341,6 +341,7 @@ class TestDataDirRegistry:
         external = tmp_path / "external"
 
         monkeypatch.delenv("CRG_DATA_DIR", raising=False)
+        monkeypatch.setenv("CRG_REGISTRY", str(tmp_path / "registry.json"))
 
         # Set in registry
         registry = Registry()
@@ -362,6 +363,7 @@ class TestDataDirRegistry:
         env_dir = tmp_path / "env-data"
 
         monkeypatch.setenv("CRG_DATA_DIR", str(env_dir))
+        monkeypatch.setenv("CRG_REGISTRY", str(tmp_path / "registry.json"))
 
         # Set in registry
         registry = Registry()
@@ -413,6 +415,7 @@ class TestDataDirRegistry:
         data_dir = tmp_path / "nonexistent" / "nested" / "path"
 
         monkeypatch.delenv("CRG_DATA_DIR", raising=False)
+        monkeypatch.setenv("CRG_REGISTRY", str(tmp_path / "registry.json"))
 
         registry = Registry()
         registry.set_data_dir(str(repo), str(data_dir))
